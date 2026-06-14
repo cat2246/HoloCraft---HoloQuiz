@@ -9,6 +9,10 @@ def test_normalize_question_removes_answer_marker_and_punctuation_noise():
     assert normalize_question("  Who created Minecraft? = ?  ") == "who created minecraft"
 
 
+def test_normalize_question_removes_plain_trailing_question_mark():
+    assert normalize_question("Who created Minecraft?") == "who created minecraft"
+
+
 def test_memory_saves_and_loads_answer(tmp_path):
     memory_path = tmp_path / "quiz_memory.json"
     memory = QuizMemory.load(memory_path)
@@ -17,6 +21,74 @@ def test_memory_saves_and_loads_answer(tmp_path):
     reloaded = QuizMemory.load(memory_path)
 
     assert reloaded.lookup("who created minecraft?") == "Notch"
+
+
+def test_lookup_finds_question_stored_under_original_text_key(tmp_path):
+    memory_path = tmp_path / "quiz_memory.json"
+    memory_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "questions": {
+                    "Who created Minecraft?": {
+                        "question": "Who created Minecraft?",
+                        "answer": "Notch",
+                        "source": "answer_reveal",
+                        "times_seen": 0,
+                        "times_used": 0,
+                        "last_seen": "",
+                        "last_corrected": "",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    memory = QuizMemory.load(memory_path)
+
+    assert memory.lookup("Who created Minecraft?") == "Notch"
+    assert memory.lookup("who created minecraft") == "Notch"
+    assert memory.lookup("Who created Minecraft? = ?") == "Notch"
+    assert "who created minecraft" in memory.data["questions"]
+    assert "Who created Minecraft?" not in memory.data["questions"]
+
+
+def test_sanitizing_duplicate_question_keys_keeps_answered_entry(tmp_path):
+    memory_path = tmp_path / "quiz_memory.json"
+    memory_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "questions": {
+                    "Who created Minecraft?": {
+                        "question": "Who created Minecraft?",
+                        "answer": "Notch",
+                        "source": "answer_reveal",
+                        "times_seen": 0,
+                        "times_used": 0,
+                        "last_seen": "",
+                        "last_corrected": "",
+                    },
+                    "who created minecraft": {
+                        "question": "Who created Minecraft?",
+                        "answer": "",
+                        "source": "seen",
+                        "times_seen": 1,
+                        "times_used": 0,
+                        "last_seen": "",
+                        "last_corrected": "",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    memory = QuizMemory.load(memory_path)
+
+    assert memory.lookup("Who created Minecraft?") == "Notch"
+    assert list(memory.data["questions"]) == ["who created minecraft"]
 
 
 def test_lookup_tracks_usage(tmp_path):

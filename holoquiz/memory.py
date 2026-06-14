@@ -116,6 +116,7 @@ class QuizMemory:
     def _sanitize_entries(self) -> bool:
         changed = False
         questions = self.data["questions"]
+        sanitized_questions: dict[str, dict[str, Any]] = {}
 
         for key, entry in questions.items():
             sanitized = {
@@ -130,10 +131,28 @@ class QuizMemory:
                     "",
                 ),
             }
+            sanitized_key = normalize_question(key)
+            if not sanitized_key:
+                sanitized_key = normalize_question(sanitized["question"]) or key
+
             if entry != sanitized:
-                questions[key] = sanitized
+                changed = True
+            if key != sanitized_key:
                 changed = True
 
+            existing = sanitized_questions.get(sanitized_key)
+            if existing is None:
+                sanitized_questions[sanitized_key] = sanitized
+            else:
+                sanitized_questions[sanitized_key] = _merge_duplicate_entry(
+                    existing,
+                    sanitized,
+                )
+                changed = True
+
+        if questions != sanitized_questions:
+            self.data["questions"] = sanitized_questions
+            changed = True
         return changed
 
 
@@ -152,6 +171,28 @@ def _int_or_zero(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _merge_duplicate_entry(
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+) -> dict[str, Any]:
+    merged = (existing if existing.get("answer") else incoming).copy()
+    merged["times_seen"] = max(
+        int(existing.get("times_seen", 0)),
+        int(incoming.get("times_seen", 0)),
+    )
+    merged["times_used"] = max(
+        int(existing.get("times_used", 0)),
+        int(incoming.get("times_used", 0)),
+    )
+    if not merged.get("last_seen"):
+        merged["last_seen"] = existing.get("last_seen") or incoming.get("last_seen", "")
+    if not merged.get("last_corrected"):
+        merged["last_corrected"] = (
+            existing.get("last_corrected") or incoming.get("last_corrected", "")
+        )
+    return merged
 
 
 def _timestamp() -> str:
