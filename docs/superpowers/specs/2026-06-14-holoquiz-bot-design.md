@@ -138,7 +138,7 @@ For unknown non-math questions, the first version should call Codex CLI non-inte
 codex exec -m gpt-5.4-mini --sandbox read-only --ask-for-approval never --ephemeral --color never --output-last-message <temp-answer-file> "<prompt>"
 ```
 
-If `codex_enable_search` is true, append `--search`. Search should stay off by default for speed.
+If `codex_enable_search` is true, call `codex --search exec ...` instead. Search should stay off by default for speed.
 
 The app should read the final answer from `<temp-answer-file>` rather than parsing terminal output. It should enforce `codex_timeout_seconds`; if Codex does not answer in time, the app should skip sending an answer for that question instead of sending late or uncertain text.
 
