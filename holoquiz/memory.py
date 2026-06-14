@@ -43,7 +43,10 @@ class QuizMemory:
         if not all(isinstance(entry, dict) for entry in data["questions"].values()):
             return cls._recover_invalid_file(path)
 
-        return cls(path, data)
+        memory = cls(path, data)
+        if memory._sanitize_entries():
+            memory.save()
+        return memory
 
     @classmethod
     def _recover_invalid_file(cls, path: Path) -> QuizMemory:
@@ -110,9 +113,45 @@ class QuizMemory:
             }
         return questions[key]
 
+    def _sanitize_entries(self) -> bool:
+        changed = False
+        questions = self.data["questions"]
+
+        for key, entry in questions.items():
+            sanitized = {
+                "question": _string_or_default(entry.get("question"), key),
+                "answer": _string_or_default(entry.get("answer"), ""),
+                "source": _string_or_default(entry.get("source"), "seen"),
+                "times_seen": _int_or_zero(entry.get("times_seen")),
+                "times_used": _int_or_zero(entry.get("times_used")),
+                "last_seen": _string_or_default(entry.get("last_seen"), ""),
+                "last_corrected": _string_or_default(
+                    entry.get("last_corrected"),
+                    "",
+                ),
+            }
+            if entry != sanitized:
+                questions[key] = sanitized
+                changed = True
+
+        return changed
+
 
 def _empty_memory() -> dict[str, Any]:
     return deepcopy(EMPTY_MEMORY)
+
+
+def _string_or_default(value: Any, default: str) -> str:
+    return value if isinstance(value, str) else default
+
+
+def _int_or_zero(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _timestamp() -> str:

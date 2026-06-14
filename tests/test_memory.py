@@ -96,6 +96,52 @@ def test_invalid_question_entry_is_recovered_without_crashing(tmp_path):
     assert json.loads(memory_path.read_text(encoding="utf-8")) == {"version": 1, "questions": {}}
 
 
+def test_malformed_question_entry_metadata_is_sanitized(tmp_path):
+    memory_path = tmp_path / "quiz_memory.json"
+    memory_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "questions": {
+                    "foo": {
+                        "question": 123,
+                        "answer": "bar",
+                        "source": None,
+                        "times_seen": "often",
+                        "times_used": "many",
+                        "last_seen": 456,
+                        "last_corrected": [],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    memory = QuizMemory.load(memory_path)
+
+    assert json.loads(memory_path.read_text(encoding="utf-8")) == memory.data
+    assert memory.data["questions"]["foo"] == {
+        "question": "foo",
+        "answer": "bar",
+        "source": "seen",
+        "times_seen": 0,
+        "times_used": 0,
+        "last_seen": "",
+        "last_corrected": "",
+    }
+    assert memory.lookup("foo") == "bar"
+    entry = memory.data["questions"]["foo"]
+    assert entry["question"] == "foo"
+    assert entry["answer"] == "bar"
+    assert entry["source"] == "seen"
+    assert entry["times_seen"] == 0
+    assert entry["times_used"] == 1
+    assert isinstance(entry["last_seen"], str)
+    assert entry["last_corrected"] == ""
+    assert json.loads(memory_path.read_text(encoding="utf-8")) == memory.data
+
+
 def test_repeated_recoveries_create_distinct_backups(tmp_path, monkeypatch):
     monkeypatch.setattr(memory_module, "_timestamp_for_filename", lambda: "20260614235959")
     memory_path = tmp_path / "quiz_memory.json"
