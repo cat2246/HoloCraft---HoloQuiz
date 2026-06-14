@@ -33,7 +33,7 @@ class QuizMemory:
             return memory
 
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
         except JSONDecodeError:
             return cls._recover_invalid_file(path)
 

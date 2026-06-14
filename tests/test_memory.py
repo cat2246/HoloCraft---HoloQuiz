@@ -23,6 +23,35 @@ def test_memory_saves_and_loads_answer(tmp_path):
     assert reloaded.lookup("who created minecraft?") == "Notch"
 
 
+def test_memory_loads_bom_encoded_seeded_answer_without_recovery(tmp_path):
+    memory_path = tmp_path / "quiz_memory.json"
+    memory_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "questions": {
+                    "who created minecraft": {
+                        "question": "Who created Minecraft?",
+                        "answer": "Notch",
+                        "source": "answer_reveal",
+                        "times_seen": 0,
+                        "times_used": 0,
+                        "last_seen": "",
+                        "last_corrected": "",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8-sig",
+    )
+
+    memory = QuizMemory.load(memory_path)
+
+    assert not list(tmp_path.glob("quiz_memory.json.corrupt-*.bak"))
+    assert memory.data["questions"]["who created minecraft"]["answer"] == "Notch"
+    assert memory.lookup("Who created Minecraft?") == "Notch"
+
+
 def test_lookup_finds_question_stored_under_original_text_key(tmp_path):
     memory_path = tmp_path / "quiz_memory.json"
     memory_path.write_text(
