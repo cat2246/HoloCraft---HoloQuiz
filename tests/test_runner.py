@@ -1,6 +1,10 @@
+import json
+
+import pytest
+
 from holoquiz.config import BotConfig
 from holoquiz.memory import QuizMemory
-from holoquiz.runner import HoloQuizBot
+from holoquiz.runner import HoloQuizBot, build_bot
 
 
 class FakeAnswerService:
@@ -87,3 +91,31 @@ def test_bot_records_revealed_answer_for_pending_question(tmp_path):
     bot.handle_line("[17:40:09] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] No one got the answer! The answer was Notch.")
 
     assert bot.memory.lookup("Who created Minecraft?") == "Notch"
+
+
+def test_bot_clears_pending_question_after_reveal_to_ignore_later_math_reveal(tmp_path):
+    answer_service = FakeAnswerService({"Who created Minecraft?": "Jeb"})
+    bot = make_bot(tmp_path, answer_service=answer_service)
+
+    bot.handle_line("[17:40:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] Who created Minecraft?")
+    bot.handle_line("[17:40:09] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] No one got the answer! The answer was Notch.")
+
+    assert bot.memory.lookup("Who created Minecraft?") == "Notch"
+    assert bot.pending_question is None
+
+    bot.handle_line("[17:41:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] 0-(9+12+11+10) = ?")
+    bot.handle_line("[17:41:09] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] No one got the answer! The answer was -42.")
+
+    assert bot.memory.lookup("Who created Minecraft?") == "Notch"
+
+
+def test_build_bot_rejects_configured_missing_log_path(tmp_path):
+    missing_log_path = tmp_path / "missing" / "latest.log"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"log_path": str(missing_log_path)}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(FileNotFoundError, match="latest.log"):
+        build_bot(config_path=config_path, workspace=tmp_path)

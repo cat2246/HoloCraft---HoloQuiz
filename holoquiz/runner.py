@@ -93,14 +93,17 @@ class HoloQuizBot:
     def _handle_answer_reveal(self, answer: str) -> None:
         if self.pending_question is None:
             print(f"[reveal] {answer} (no pending question)")
+            self.pending_question = None
             return
 
+        pending_question = self.pending_question
         self.memory.record_answer(
-            self.pending_question.question,
+            pending_question.question,
             answer,
             source="answer_reveal",
         )
-        print(f"[learned] {self.pending_question.question} -> {answer}")
+        print(f"[learned] {pending_question.question} -> {answer}")
+        self.pending_question = None
 
 
 def build_bot(
@@ -112,6 +115,11 @@ def build_bot(
     if log_path is None:
         raise FileNotFoundError(
             "No Minecraft latest.log found. Set log_path in config.json."
+        )
+    if not log_path.exists():
+        raise FileNotFoundError(
+            f"Minecraft log path does not exist: {log_path}. "
+            "Set log_path in config.json."
         )
 
     memory = QuizMemory.load(config.memory_path)
