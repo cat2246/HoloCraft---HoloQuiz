@@ -113,6 +113,10 @@ The key is the normalized question. The original question remains stored for rea
   "log_path": "",
   "dry_run": true,
   "codex_command": "codex",
+  "codex_model": "gpt-5.4-mini",
+  "codex_timeout_seconds": 6,
+  "codex_enable_search": false,
+  "codex_persistent_session": false,
   "send_delay_seconds": 0.8,
   "question_cooldown_seconds": 3.0,
   "keyboard_open_chat_key": "t",
@@ -122,17 +126,52 @@ The key is the normalized question. The original question remains stored for rea
 
 If `log_path` is empty, the app can try common TLauncher and `.minecraft` locations and show a clear error if none is found.
 
+`gpt-5.4-mini` is the default fallback model because the bot needs low latency but still needs enough accuracy for Minecraft and trivia questions. `gpt-5.4-nano` can be tested later as a faster, cheaper option if accuracy is acceptable. `codex_enable_search` defaults to false because web search adds latency and the JSON memory should be the main speed layer.
+
+`codex_persistent_session` is included for future experimentation, but the first version should keep it false and use one `codex exec` subprocess per unknown question. This is easier to make reliable than driving an interactive terminal session from Python.
+
+## Codex CLI Call
+
+For unknown non-math questions, the first version should call Codex CLI non-interactively:
+
+```powershell
+codex exec -m gpt-5.4-mini --sandbox read-only --ask-for-approval never --ephemeral --color never --output-last-message <temp-answer-file> "<prompt>"
+```
+
+If `codex_enable_search` is true, append `--search`. Search should stay off by default for speed.
+
+The app should read the final answer from `<temp-answer-file>` rather than parsing terminal output. It should enforce `codex_timeout_seconds`; if Codex does not answer in time, the app should skip sending an answer for that question instead of sending late or uncertain text.
+
 ## Codex CLI Prompt
 
 For unknown non-math questions, the app should call Codex CLI with a constrained prompt:
 
 ```text
-Answer this Minecraft server quiz question with only the shortest likely answer. Do not explain. If uncertain, provide the best concise answer.
+You answer Minecraft server quiz questions.
+
+Return ONLY the answer text.
+No explanation.
+No punctuation unless it is part of the answer.
+Use the shortest common answer.
+If the question asks for a number, return digits only.
+If unsure, return the best likely answer.
+Do not run tools or commands.
+
+Examples:
+Question: What mob explodes near players?
+Answer: Creeper
+
+Question: What ore is used to make a beacon base?
+Answer: Iron
+
+Question: Who created Minecraft?
+Answer: Notch
 
 Question: <question>
+Answer:
 ```
 
-The app should trim whitespace and use only the first non-empty output line as the candidate answer.
+The app should trim whitespace and use only the first non-empty output line as the candidate answer. If the first non-empty line starts with `Answer:`, the app should remove that prefix before sending.
 
 ## Keyboard Sender
 
