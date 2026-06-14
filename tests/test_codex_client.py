@@ -27,6 +27,10 @@ def test_clean_answer_strips_quotes_and_trailing_period():
     assert clean_answer('"Creeper."') == "Creeper"
 
 
+def test_clean_answer_keeps_abbreviation_periods():
+    assert clean_answer("U.S.") == "U.S."
+
+
 def test_ask_builds_codex_exec_command(tmp_path, monkeypatch):
     calls = []
 
@@ -86,5 +90,25 @@ def test_ask_returns_none_on_timeout(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     client = CodexAnswerClient(config=BotConfig(codex_timeout_seconds=1), workspace=tmp_path)
+
+    assert client.ask("Who created Minecraft?") is None
+
+
+def test_ask_returns_none_on_called_process_error(tmp_path, monkeypatch):
+    def fake_run(command, timeout, check, capture_output, text):
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = CodexAnswerClient(config=BotConfig(), workspace=tmp_path)
+
+    assert client.ask("Who created Minecraft?") is None
+
+
+def test_ask_returns_none_on_os_error(tmp_path, monkeypatch):
+    def fake_run(command, timeout, check, capture_output, text):
+        raise OSError("codex not found")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = CodexAnswerClient(config=BotConfig(), workspace=tmp_path)
 
     assert client.ask("Who created Minecraft?") is None

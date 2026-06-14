@@ -39,7 +39,7 @@ def clean_answer(output: str) -> str | None:
     answer = re.sub(r"^answer\s*:\s*", "", line, flags=re.IGNORECASE).strip()
     if len(answer) >= 2 and answer[0] == answer[-1] and answer[0] in {"'", '"'}:
         answer = answer[1:-1].strip()
-    if answer.endswith("."):
+    if answer.endswith(".") and answer.count(".") == 1:
         answer = answer[:-1].strip()
 
     return answer or None
