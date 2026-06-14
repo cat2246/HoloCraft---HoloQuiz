@@ -11,7 +11,12 @@ from holoquiz.codex_client import CodexAnswerClient
 from holoquiz.config import BotConfig, discover_default_log_path, load_config
 from holoquiz.log_tailer import LogTailer
 from holoquiz.memory import QuizMemory, normalize_question
-from holoquiz.parser import AnswerReveal, QuizQuestion, parse_log_line
+from holoquiz.parser import (
+    AnswerReveal,
+    QuizQuestion,
+    is_ignored_math_holoquiz_line,
+    parse_log_line,
+)
 
 
 class AnswerService(Protocol):
@@ -50,6 +55,8 @@ class HoloQuizBot:
     def handle_line(self, line: str) -> None:
         event = parse_log_line(line)
         if event is None:
+            if is_ignored_math_holoquiz_line(line):
+                self.pending_question = None
             return
 
         if isinstance(event, QuizQuestion):

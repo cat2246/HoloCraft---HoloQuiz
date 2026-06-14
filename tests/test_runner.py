@@ -71,6 +71,26 @@ def test_bot_ignores_math_question(tmp_path):
     assert answer_service.questions == []
 
 
+def test_math_question_clears_stale_pending_question_without_learning_reveal(tmp_path):
+    sender = FakeSender()
+    answer_service = FakeAnswerService({"Who created Minecraft?": "Jeb"})
+    bot = make_bot(tmp_path, answer_service=answer_service, sender=sender)
+
+    bot.handle_line("[17:40:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] Who created Minecraft?")
+
+    assert bot.pending_question is not None
+    assert sender.sent == ["Jeb"]
+
+    bot.handle_line("[17:41:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] 0-(9+12+11+10) = ?")
+
+    assert bot.pending_question is None
+    assert sender.sent == ["Jeb"]
+
+    bot.handle_line("[17:41:09] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] No one got the answer! The answer was -42.")
+
+    assert bot.memory.lookup("Who created Minecraft?") == "Jeb"
+
+
 def test_bot_applies_cooldown_for_duplicate_question(tmp_path):
     sender = FakeSender()
     answer_service = FakeAnswerService({"Who created Minecraft?": "Notch"})

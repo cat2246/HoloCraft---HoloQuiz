@@ -20,15 +20,10 @@ class AnswerReveal:
 
 
 def parse_log_line(line: str) -> QuizQuestion | AnswerReveal | None:
-    chat_index = line.find(CHAT_MARKER)
-    if chat_index == -1:
+    message = _holoquiz_message(line)
+    if message is None:
         return None
 
-    chat_message = line[chat_index + len(CHAT_MARKER) :].lstrip()
-    if not chat_message.startswith(HOLOQUIZ_MARKER):
-        return None
-
-    message = chat_message[len(HOLOQUIZ_MARKER) :].strip()
     reveal = _parse_answer_reveal(message)
     if reveal:
         return reveal
@@ -40,6 +35,27 @@ def parse_log_line(line: str) -> QuizQuestion | AnswerReveal | None:
         return None
 
     return QuizQuestion(question=message)
+
+
+def is_ignored_math_holoquiz_line(line: str) -> bool:
+    message = _holoquiz_message(line)
+    if message is None:
+        return False
+
+    return _looks_like_question(message) and is_math_prompt(message)
+
+
+def _holoquiz_message(line: str) -> str | None:
+    chat_index = line.find(CHAT_MARKER)
+    if chat_index == -1:
+        return None
+
+    chat_message = line[chat_index + len(CHAT_MARKER) :].lstrip()
+    if not chat_message.startswith(HOLOQUIZ_MARKER):
+        return None
+
+    message = chat_message[len(HOLOQUIZ_MARKER) :].strip()
+    return message
 
 
 def is_math_prompt(message: str) -> bool:

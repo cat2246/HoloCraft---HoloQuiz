@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime
 import json
 from json import JSONDecodeError
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -57,10 +58,15 @@ class QuizMemory:
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(self.data, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        temp_path = self.path.with_name(f"{self.path.name}.tmp")
+        contents = json.dumps(self.data, indent=2, sort_keys=True) + "\n"
+
+        with temp_path.open("w", encoding="utf-8") as temp_file:
+            temp_file.write(contents)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+
+        temp_path.replace(self.path)
 
     def lookup(self, question: str) -> str | None:
         key = normalize_question(question)

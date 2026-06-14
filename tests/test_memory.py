@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import re
 
 from holoquiz import memory as memory_module
@@ -21,6 +22,29 @@ def test_memory_saves_and_loads_answer(tmp_path):
     reloaded = QuizMemory.load(memory_path)
 
     assert reloaded.lookup("who created minecraft?") == "Notch"
+
+
+def test_save_replaces_target_with_temp_file_and_removes_temp(tmp_path, monkeypatch):
+    memory_path = tmp_path / "nested" / "quiz_memory.json"
+    temp_path = memory_path.with_name(f"{memory_path.name}.tmp")
+    memory = QuizMemory(memory_path, {"version": 1, "questions": {}})
+    replacements = []
+    original_replace = Path.replace
+
+    def spy_replace(self, target):
+        replacements.append((Path(self), Path(target)))
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", spy_replace)
+
+    memory.save()
+
+    assert replacements == [(temp_path, memory_path)]
+    assert not temp_path.exists()
+    assert json.loads(memory_path.read_text(encoding="utf-8")) == {
+        "version": 1,
+        "questions": {},
+    }
 
 
 def test_memory_loads_bom_encoded_seeded_answer_without_recovery(tmp_path):
