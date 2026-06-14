@@ -25,6 +25,30 @@ def test_tailer_resets_after_truncation(tmp_path):
     log_path.write_text("old line\n", encoding="utf-8")
     tailer = LogTailer(log_path, start_at_end=True)
 
-    log_path.write_text("fresh line\n", encoding="utf-8")
+    log_path.write_text("new\n", encoding="utf-8")
 
-    assert tailer.read_available() == ["fresh line\n"]
+    assert tailer.read_available() == ["new\n"]
+
+
+def test_tailer_keeps_position_when_rewrite_is_not_smaller(tmp_path):
+    log_path = tmp_path / "latest.log"
+    log_path.write_text("old line\n", encoding="utf-8")
+    tailer = LogTailer(log_path, start_at_end=True)
+
+    log_path.write_text("new line\n", encoding="utf-8")
+
+    assert tailer.read_available() == []
+
+
+def test_tailer_returns_empty_list_when_file_is_missing(tmp_path):
+    tailer = LogTailer(tmp_path / "missing.log")
+
+    assert tailer.read_available() == []
+
+
+def test_tailer_replaces_invalid_utf8_bytes(tmp_path):
+    log_path = tmp_path / "latest.log"
+    log_path.write_bytes(b"valid\ninvalid \xff\n")
+    tailer = LogTailer(log_path, start_at_end=False)
+
+    assert tailer.read_available() == ["valid\n", "invalid \ufffd\n"]
