@@ -1,1 +1,8 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+.tmp/
+config.json
+quiz_memory.json
+*.bak
 .worktrees/

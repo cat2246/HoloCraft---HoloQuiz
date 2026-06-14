@@ -1,0 +1,17 @@
+[project]
+name = "holoquiz-bot"
+version = "0.1.0"
+description = "Minecraft HoloQuiz helper that learns answers and can type them into chat."
+requires-python = ">=3.10"
+dependencies = [
+  "pyautogui>=0.9.54"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
