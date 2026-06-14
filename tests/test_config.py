@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from holoquiz.config import BotConfig, discover_default_log_path, load_config
@@ -10,7 +11,19 @@ def test_load_config_creates_default_when_missing(tmp_path):
 
     assert config == BotConfig()
     assert config_path.exists()
-    assert '"dry_run": true' in config_path.read_text(encoding="utf-8")
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "log_path": "",
+        "dry_run": True,
+        "codex_command": "codex",
+        "codex_model": "gpt-5.4-mini",
+        "codex_timeout_seconds": 6,
+        "codex_enable_search": False,
+        "codex_persistent_session": False,
+        "send_delay_seconds": 0.8,
+        "question_cooldown_seconds": 3.0,
+        "keyboard_open_chat_key": "t",
+        "typing_interval_seconds": 0.01,
+    }
 
 
 def test_load_config_overrides_defaults(tmp_path):
@@ -22,7 +35,8 @@ def test_load_config_overrides_defaults(tmp_path):
   "dry_run": false,
   "codex_model": "gpt-5.4-nano",
   "codex_timeout_seconds": 3,
-  "send_delay_seconds": 0.2
+  "send_delay_seconds": 0.2,
+  "memory_path": "custom_memory.json"
 }
 """.strip(),
         encoding="utf-8",
@@ -36,6 +50,7 @@ def test_load_config_overrides_defaults(tmp_path):
     assert config.codex_timeout_seconds == 3
     assert config.send_delay_seconds == 0.2
     assert config.codex_command == "codex"
+    assert config.memory_path == Path("custom_memory.json")
 
 
 def test_discover_default_log_path_prefers_existing_latest_log(tmp_path, monkeypatch):

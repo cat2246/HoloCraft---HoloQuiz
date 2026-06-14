@@ -80,5 +80,5 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
 def _config_to_json_dict(config: BotConfig) -> dict[str, Any]:
     values = asdict(config)
     values["log_path"] = str(config.log_path) if config.log_path else ""
-    values["memory_path"] = str(config.memory_path)
+    values.pop("memory_path")
     return values
