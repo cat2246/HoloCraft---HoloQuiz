@@ -6,6 +6,7 @@ import re
 
 CHAT_MARKER = "[System] [CHAT]"
 HOLOQUIZ_MARKER = "[HoloQuiz]"
+TRAILING_ANSWER_PUNCTUATION = ".,!?;:"
 
 
 @dataclass(frozen=True)
@@ -19,10 +20,15 @@ class AnswerReveal:
 
 
 def parse_log_line(line: str) -> QuizQuestion | AnswerReveal | None:
-    if CHAT_MARKER not in line or HOLOQUIZ_MARKER not in line:
+    chat_index = line.find(CHAT_MARKER)
+    if chat_index == -1:
         return None
 
-    message = line.split(HOLOQUIZ_MARKER, 1)[1].strip()
+    chat_message = line[chat_index + len(CHAT_MARKER) :].lstrip()
+    if not chat_message.startswith(HOLOQUIZ_MARKER):
+        return None
+
+    message = chat_message[len(HOLOQUIZ_MARKER) :].strip()
     reveal = _parse_answer_reveal(message)
     if reveal:
         return reveal
@@ -57,8 +63,8 @@ def _looks_like_question(message: str) -> bool:
 
 
 def _parse_answer_reveal(message: str) -> AnswerReveal | None:
-    match = re.search(r"The answer was\s+(.+?)(?:[.!])?$", message, flags=re.IGNORECASE)
+    match = re.search(r"The answer was\s+(.+?)\s*$", message, flags=re.IGNORECASE)
     if not match:
         return None
-    answer = match.group(1).strip()
+    answer = match.group(1).strip().rstrip(TRAILING_ANSWER_PUNCTUATION)
     return AnswerReveal(answer=answer)

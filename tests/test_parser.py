@@ -17,8 +17,22 @@ def test_parse_holoquiz_question_without_equals_marker():
     assert event == QuizQuestion(question="What mob explodes near players?")
 
 
+def test_parse_holoquiz_question_with_arithmetic_like_text():
+    line = "[17:42:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] What item is crafted with 3 sticks?"
+
+    event = parse_log_line(line)
+
+    assert event == QuizQuestion(question="What item is crafted with 3 sticks?")
+
+
 def test_ignore_non_holoquiz_chat():
     line = "[17:36:16] [Render thread/INFO]: [System] [CHAT] [Newbie] truntd: 42"
+
+    assert parse_log_line(line) is None
+
+
+def test_ignore_chat_message_that_mentions_holoquiz():
+    line = "[17:41:00] [Render thread/INFO]: [System] [CHAT] [Newbie] bob: [HoloQuiz] Who created Minecraft?"
 
     assert parse_log_line(line) is None
 
@@ -49,3 +63,19 @@ def test_parse_answer_reveal_with_negative_answer():
     event = parse_log_line(line)
 
     assert event == AnswerReveal(answer="-42")
+
+
+def test_parse_answer_reveal_strips_repeated_punctuation():
+    line = "[17:43:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] No one got the answer! The answer was Notch!!!"
+
+    event = parse_log_line(line)
+
+    assert event == AnswerReveal(answer="Notch")
+
+
+def test_parse_answer_reveal_strips_question_mark():
+    line = "[17:44:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] No one got the answer! The answer was Steve?"
+
+    event = parse_log_line(line)
+
+    assert event == AnswerReveal(answer="Steve")
