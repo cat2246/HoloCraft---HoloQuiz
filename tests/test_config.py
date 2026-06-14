@@ -53,6 +53,28 @@ def test_load_config_overrides_defaults(tmp_path):
     assert config.memory_path == Path("custom_memory.json")
 
 
+def test_load_config_accepts_utf8_sig_config_file(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "log_path": "C:/Minecraft/logs/latest.log",
+                "dry_run": False,
+                "codex_model": "gpt-5.4-nano",
+                "memory_path": "custom_memory.json",
+            }
+        ),
+        encoding="utf-8-sig",
+    )
+
+    config = load_config(config_path)
+
+    assert config.log_path == Path("C:/Minecraft/logs/latest.log")
+    assert config.dry_run is False
+    assert config.codex_model == "gpt-5.4-nano"
+    assert config.memory_path == Path("custom_memory.json")
+
+
 def test_discover_default_log_path_prefers_existing_latest_log(tmp_path, monkeypatch):
     appdata = tmp_path / "AppData" / "Roaming"
     userprofile = tmp_path / "User"

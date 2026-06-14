@@ -64,7 +64,7 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
         )
         return BotConfig()
 
-    raw_config = json.loads(path.read_text(encoding="utf-8"))
+    raw_config = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(raw_config, dict):
         raise ValueError("Config root must be a JSON object.")
 
