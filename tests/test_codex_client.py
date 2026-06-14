@@ -10,7 +10,10 @@ def test_build_prompt_includes_examples_and_question():
     assert "Return ONLY the answer text." in prompt
     assert "Question: What mob explodes near players?" in prompt
     assert "Answer: Creeper" in prompt
+    assert "Question: What ore is used to make a beacon base?" in prompt
+    assert "Answer: Iron" in prompt
     assert "Question: Who created Minecraft?" in prompt
+    assert "Answer: Notch" in prompt
     assert prompt.rstrip().endswith("Answer:")
 
 
@@ -56,6 +59,25 @@ def test_ask_builds_codex_exec_command(tmp_path, monkeypatch):
     assert "--color" in command
     assert "--output-last-message" in command
     assert calls[0]["timeout"] == 4
+
+
+def test_ask_inserts_search_flag_before_exec(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(command, timeout, check, capture_output, text):
+        calls.append(command)
+        output_path = command[command.index("--output-last-message") + 1]
+        output_path.write_text("Creeper\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = CodexAnswerClient(
+        config=BotConfig(codex_enable_search=True),
+        workspace=tmp_path,
+    )
+
+    assert client.ask("What mob explodes near players?") == "Creeper"
+    assert calls[0][:4] == ["codex", "--search", "exec", "-m"]
 
 
 def test_ask_returns_none_on_timeout(tmp_path, monkeypatch):

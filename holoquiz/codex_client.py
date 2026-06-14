@@ -22,7 +22,7 @@ def build_prompt(question: str) -> str:
         "Examples:\n"
         "Question: What mob explodes near players?\n"
         "Answer: Creeper\n"
-        "Question: What ore is used to make buckets?\n"
+        "Question: What ore is used to make a beacon base?\n"
         "Answer: Iron\n"
         "Question: Who created Minecraft?\n"
         "Answer: Notch\n\n"
