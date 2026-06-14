@@ -40,10 +40,24 @@ def test_load_config_overrides_defaults(tmp_path):
 
 def test_discover_default_log_path_prefers_existing_latest_log(tmp_path, monkeypatch):
     appdata = tmp_path / "AppData" / "Roaming"
+    userprofile = tmp_path / "User"
     expected = appdata / ".minecraft" / "logs" / "latest.log"
-    expected.parent.mkdir(parents=True)
-    expected.write_text("", encoding="utf-8")
+    userprofile_minecraft = (
+        userprofile / "AppData" / "Roaming" / ".minecraft" / "logs" / "latest.log"
+    )
+    tlauncher = (
+        userprofile
+        / ".tlauncher"
+        / "legacy"
+        / "Minecraft"
+        / "game"
+        / "logs"
+        / "latest.log"
+    )
+    for candidate in (expected, userprofile_minecraft, tlauncher):
+        candidate.parent.mkdir(parents=True)
+        candidate.write_text("", encoding="utf-8")
     monkeypatch.setenv("APPDATA", str(appdata))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path / "User"))
+    monkeypatch.setenv("USERPROFILE", str(userprofile))
 
     assert discover_default_log_path() == expected
