@@ -35,18 +35,22 @@ class QuizMemory:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except JSONDecodeError:
-            backup_path = path.with_name(
-                f"{path.name}.corrupt-{_timestamp_for_filename()}.bak"
-            )
-            path.replace(backup_path)
-            memory = cls(path, _empty_memory())
-            memory.save()
-            return memory
+            return cls._recover_invalid_file(path)
 
         if not isinstance(data, dict) or not isinstance(data.get("questions"), dict):
-            return cls(path, _empty_memory())
+            return cls._recover_invalid_file(path)
+
+        if not all(isinstance(entry, dict) for entry in data["questions"].values()):
+            return cls._recover_invalid_file(path)
 
         return cls(path, data)
+
+    @classmethod
+    def _recover_invalid_file(cls, path: Path) -> QuizMemory:
+        path.replace(_backup_path(path))
+        memory = cls(path, _empty_memory())
+        memory.save()
+        return memory
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,4 +120,16 @@ def _timestamp() -> str:
 
 
 def _timestamp_for_filename() -> str:
-    return datetime.now().astimezone().strftime("%Y%m%d%H%M%S")
+    return datetime.now().astimezone().strftime("%Y%m%d%H%M%S%f")
+
+
+def _backup_path(path: Path) -> Path:
+    base_name = f"{path.name}.corrupt-{_timestamp_for_filename()}"
+    candidate = path.with_name(f"{base_name}.bak")
+    suffix = 1
+
+    while candidate.exists():
+        candidate = path.with_name(f"{base_name}-{suffix}.bak")
+        suffix += 1
+
+    return candidate

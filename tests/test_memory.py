@@ -62,3 +62,41 @@ def test_corrupt_json_is_backed_up(tmp_path):
     assert memory.data == {"version": 1, "questions": {}}
     assert len(backups) == 1
     assert json.loads(memory_path.read_text(encoding="utf-8")) == {"version": 1, "questions": {}}
+
+
+def test_invalid_json_shape_is_backed_up_and_rewritten(tmp_path):
+    memory_path = tmp_path / "quiz_memory.json"
+    memory_path.write_text(json.dumps({"version": 1, "questions": []}), encoding="utf-8")
+
+    memory = QuizMemory.load(memory_path)
+
+    backups = list(tmp_path.glob("quiz_memory.json.corrupt-*.bak"))
+    assert memory.data == {"version": 1, "questions": {}}
+    assert len(backups) == 1
+    assert json.loads(memory_path.read_text(encoding="utf-8")) == {"version": 1, "questions": {}}
+
+
+def test_invalid_question_entry_is_recovered_without_crashing(tmp_path):
+    memory_path = tmp_path / "quiz_memory.json"
+    memory_path.write_text(
+        json.dumps({"version": 1, "questions": {"foo": "bar"}}),
+        encoding="utf-8",
+    )
+
+    memory = QuizMemory.load(memory_path)
+
+    assert memory.lookup("foo") is None
+    assert memory.data == {"version": 1, "questions": {}}
+    assert json.loads(memory_path.read_text(encoding="utf-8")) == {"version": 1, "questions": {}}
+
+
+def test_repeated_recoveries_create_distinct_backups(tmp_path):
+    memory_path = tmp_path / "quiz_memory.json"
+    memory_path.write_text("{bad json", encoding="utf-8")
+    QuizMemory.load(memory_path)
+
+    memory_path.write_text(json.dumps([]), encoding="utf-8")
+    QuizMemory.load(memory_path)
+
+    backups = list(tmp_path.glob("quiz_memory.json.corrupt-*.bak"))
+    assert len(backups) == 2
