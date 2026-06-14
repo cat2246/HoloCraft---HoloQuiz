@@ -120,7 +120,7 @@ def _timestamp() -> str:
 
 
 def _timestamp_for_filename() -> str:
-    return datetime.now().astimezone().strftime("%Y%m%d%H%M%S%f")
+    return datetime.now().astimezone().strftime("%Y%m%d%H%M%S")
 
 
 def _backup_path(path: Path) -> Path:

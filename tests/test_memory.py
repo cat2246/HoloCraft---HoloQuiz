@@ -1,5 +1,7 @@
 import json
+import re
 
+from holoquiz import memory as memory_module
 from holoquiz.memory import QuizMemory, normalize_question
 
 
@@ -61,6 +63,10 @@ def test_corrupt_json_is_backed_up(tmp_path):
     backups = list(tmp_path.glob("quiz_memory.json.corrupt-*.bak"))
     assert memory.data == {"version": 1, "questions": {}}
     assert len(backups) == 1
+    assert re.fullmatch(
+        r"quiz_memory\.json\.corrupt-\d{14}\.bak",
+        backups[0].name,
+    )
     assert json.loads(memory_path.read_text(encoding="utf-8")) == {"version": 1, "questions": {}}
 
 
@@ -90,7 +96,8 @@ def test_invalid_question_entry_is_recovered_without_crashing(tmp_path):
     assert json.loads(memory_path.read_text(encoding="utf-8")) == {"version": 1, "questions": {}}
 
 
-def test_repeated_recoveries_create_distinct_backups(tmp_path):
+def test_repeated_recoveries_create_distinct_backups(tmp_path, monkeypatch):
+    monkeypatch.setattr(memory_module, "_timestamp_for_filename", lambda: "20260614235959")
     memory_path = tmp_path / "quiz_memory.json"
     memory_path.write_text("{bad json", encoding="utf-8")
     QuizMemory.load(memory_path)
@@ -98,5 +105,9 @@ def test_repeated_recoveries_create_distinct_backups(tmp_path):
     memory_path.write_text(json.dumps([]), encoding="utf-8")
     QuizMemory.load(memory_path)
 
+    base_backup = tmp_path / "quiz_memory.json.corrupt-20260614235959.bak"
+    suffixed_backup = tmp_path / "quiz_memory.json.corrupt-20260614235959-1.bak"
     backups = list(tmp_path.glob("quiz_memory.json.corrupt-*.bak"))
     assert len(backups) == 2
+    assert base_backup.exists()
+    assert suffixed_backup.exists()
