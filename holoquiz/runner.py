@@ -96,6 +96,9 @@ class HoloQuizBot:
             return
 
         print(f"[skip] {question} -> no answer")
+        debug_log = getattr(self.answer_service, "last_debug_log", None)
+        if debug_log:
+            print(debug_log)
 
     def _handle_answer_reveal(self, answer: str) -> None:
         if self.pending_question is None:

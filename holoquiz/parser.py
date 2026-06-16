@@ -75,7 +75,11 @@ def is_math_prompt(message: str) -> bool:
 def _looks_like_question(message: str) -> bool:
     if "The answer was" in message:
         return False
-    return message.endswith("?") or message.endswith("= ?")
+    return message.endswith("?") or message.endswith("= ?") or _has_blank_marker(message)
+
+
+def _has_blank_marker(message: str) -> bool:
+    return bool(re.search(r"(?<!\w)(?:-{4,}|\?{4,}|_{4,})(?!\w)", message))
 
 
 def _parse_answer_reveal(message: str) -> AnswerReveal | None:

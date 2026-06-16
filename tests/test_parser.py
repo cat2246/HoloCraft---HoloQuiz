@@ -25,6 +25,40 @@ def test_parse_holoquiz_question_with_arithmetic_like_text():
     assert event == QuizQuestion(question="What item is crafted with 3 sticks?")
 
 
+def test_parse_holoquiz_easter_egg_clue_with_dash_blank():
+    line = (
+        "[17:45:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] "
+        "Easter Egg: Did you know that there are easter eggs within HoloQuiz? "
+        "For instance, /Holoquiz -------- was the answer to one of the HoloAnniv challenges!"
+    )
+
+    event = parse_log_line(line)
+
+    assert event == QuizQuestion(
+        question=(
+            "Easter Egg: Did you know that there are easter eggs within HoloQuiz? "
+            "For instance, /Holoquiz -------- was the answer to one of the HoloAnniv challenges!"
+        )
+    )
+
+
+def test_parse_holoquiz_trivia_clue_with_question_mark_and_dash_blank():
+    line = (
+        "[17:46:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] "
+        "Hololive - Trivia: Contrary to popular belief, IRyS is not an acronym for her full name. "
+        "Instead her full name is ??????? ----"
+    )
+
+    event = parse_log_line(line)
+
+    assert event == QuizQuestion(
+        question=(
+            "Hololive - Trivia: Contrary to popular belief, IRyS is not an acronym for her full name. "
+            "Instead her full name is ??????? ----"
+        )
+    )
+
+
 def test_ignore_non_holoquiz_chat():
     line = "[17:36:16] [Render thread/INFO]: [System] [CHAT] [Newbie] truntd: 42"
 

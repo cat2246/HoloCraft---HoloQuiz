@@ -57,18 +57,29 @@ After dry-run works, edit `config.json`:
 Put Minecraft in the foreground. The bot sends answers with:
 
 ```text
-t -> answer -> Enter
+t -> Ctrl+V answer -> Enter
 ```
+
+Clipboard paste is the default because it is faster and more reliable in Minecraft than typing each character. Set `"send_mode": "type"` in `config.json` if you want the older character-by-character sender.
 
 ## Codex CLI
 
 Unknown questions use:
 
 ```powershell
-codex exec -m gpt-5.4-mini --sandbox read-only --ask-for-approval never --ephemeral --color never --output-last-message <temp-answer-file> "<prompt>"
+<prompt> | codex --ask-for-approval never exec -c 'model_reasoning_effort="low"' -m gpt-5.4 --sandbox read-only --ephemeral --color never --output-last-message <temp-answer-file> -
 ```
 
 Change `codex_model` in `config.json` if your Codex CLI does not have access to the default model.
+The bot also sets `codex_reasoning_effort` to `low` by default, which reduces reasoning tokens while keeping the stronger default model. For lower token use, set `codex_enable_search` to `false` or switch `codex_model` to a smaller model such as `gpt-5.4-mini`, but both can reduce answer accuracy.
+
+On Windows, the bot resolves `codex` through `PATH` before launching it, so npm shims such as `codex.cmd` work correctly. If the debug log still says Codex cannot start, set `codex_command` in `config.json` to the full path of your Codex executable or `.cmd` shim.
+
+If Codex returns no usable answer, the bot prints the Codex CLI debug details in the console and appends them to:
+
+```text
+.tmp/codex_cli_debug.log
+```
 
 ## Memory
 

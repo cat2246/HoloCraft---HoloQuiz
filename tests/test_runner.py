@@ -25,6 +25,13 @@ class FakeSender:
         self.sent.append(answer)
 
 
+class DebugAnswerService:
+    last_debug_log = "[codex-cli] debug details"
+
+    def ask(self, question):
+        return None
+
+
 def make_bot(tmp_path, answer_service=None, sender=None, cooldown=3.0):
     memory = QuizMemory.load(tmp_path / "quiz_memory.json")
     return HoloQuizBot(
@@ -69,6 +76,16 @@ def test_bot_ignores_math_question(tmp_path):
 
     assert sender.sent == []
     assert answer_service.questions == []
+
+
+def test_bot_prints_codex_debug_when_unknown_question_has_no_answer(tmp_path, capsys):
+    bot = make_bot(tmp_path, answer_service=DebugAnswerService())
+
+    bot.handle_line("[17:40:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] Who created Minecraft?")
+
+    output = capsys.readouterr().out
+    assert "[skip] Who created Minecraft? -> no answer" in output
+    assert "[codex-cli] debug details" in output
 
 
 def test_math_question_clears_stale_pending_question_without_learning_reveal(tmp_path):

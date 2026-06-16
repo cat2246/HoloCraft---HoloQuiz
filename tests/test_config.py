@@ -15,13 +15,15 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "log_path": "",
         "dry_run": True,
         "codex_command": "codex",
-        "codex_model": "gpt-5.4-mini",
+        "codex_model": "gpt-5.4",
+        "codex_reasoning_effort": "low",
         "codex_timeout_seconds": 6,
         "codex_enable_search": False,
         "codex_persistent_session": False,
         "send_delay_seconds": 0.8,
         "question_cooldown_seconds": 3.0,
         "keyboard_open_chat_key": "t",
+        "send_mode": "paste",
         "typing_interval_seconds": 0.01,
     }
 

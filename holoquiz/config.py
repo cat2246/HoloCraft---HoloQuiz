@@ -12,13 +12,15 @@ class BotConfig:
     log_path: Path | None = None
     dry_run: bool = True
     codex_command: str = "codex"
-    codex_model: str = "gpt-5.4-mini"
+    codex_model: str = "gpt-5.4"
+    codex_reasoning_effort: str = "low"
     codex_timeout_seconds: int = 6
     codex_enable_search: bool = False
     codex_persistent_session: bool = False
     send_delay_seconds: float = 0.8
     question_cooldown_seconds: float = 3.0
     keyboard_open_chat_key: str = "t"
+    send_mode: str = "paste"
     typing_interval_seconds: float = 0.01
     memory_path: Path = Path("quiz_memory.json")
 
