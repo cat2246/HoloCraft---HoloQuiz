@@ -1,11 +1,12 @@
 import json
+from collections import deque
 
 import pytest
 
 from holoquiz.config import BotConfig
 from holoquiz.memory import QuizMemory
 from holoquiz.runtime import FIND_ANSWER_FUNCTION, RuntimeControls
-from holoquiz.runner import HoloQuizBot, build_bot
+from holoquiz.runner import HoloQuizBot, build_bot, drain_answer_reveals
 
 
 class FakeAnswerService:
@@ -61,6 +62,16 @@ def make_bot_with_controls(
     )
 
 
+class FakeTailer:
+    def __init__(self, lines=None):
+        self.lines = deque(lines or [])
+
+    def read_available(self):
+        lines = list(self.lines)
+        self.lines.clear()
+        return lines
+
+
 def test_bot_answers_from_memory_before_codex(tmp_path):
     sender = FakeSender()
     answer_service = FakeAnswerService({"Who created Minecraft?": "Wrong"})
@@ -71,6 +82,101 @@ def test_bot_answers_from_memory_before_codex(tmp_path):
 
     assert sender.sent == ["Notch"]
     assert answer_service.questions == []
+
+
+def test_bot_tracks_latest_question_for_browser_search(tmp_path):
+    controls = RuntimeControls.from_config(BotConfig())
+    bot = make_bot_with_controls(tmp_path, controls=controls)
+
+    bot.handle_line(
+        "[17:40:00] [Render thread/INFO]: [System] [CHAT] "
+        "[HoloQuiz] Hololive - Trivia: Kronii's -------- is listed officially on Urban Dictionary."
+    )
+
+    assert (
+        controls.get_latest_question()
+        == "Hololive - Trivia: Kronii's -------- is listed officially on Urban Dictionary."
+    )
+
+
+def test_math_question_clears_latest_browser_search_question(tmp_path):
+    controls = RuntimeControls.from_config(BotConfig())
+    bot = make_bot_with_controls(tmp_path, controls=controls)
+
+    bot.handle_line(
+        "[17:40:00] [Render thread/INFO]: [System] [CHAT] "
+        "[HoloQuiz] Who created Minecraft?"
+    )
+    bot.handle_line(
+        "[17:41:00] [Render thread/INFO]: [System] [CHAT] "
+        "[HoloQuiz] 0-(9+12+11+10) = ?"
+    )
+
+    assert controls.get_latest_question() is None
+
+
+def test_live_bot_skips_codex_answer_when_reveal_arrived_while_searching(tmp_path):
+    sender = FakeSender()
+    answer_service = FakeAnswerService({"Who created Minecraft?": "Jeb"})
+    pending_lines = deque(
+        [
+            "[17:40:09] [Render thread/INFO]: [System] [CHAT] "
+            "[HoloQuiz] Alex wins after 6.238 seconds! The answer was Notch.\n"
+        ]
+    )
+    tailer = FakeTailer()
+    memory = QuizMemory.load(tmp_path / "quiz_memory.json")
+
+    bot = HoloQuizBot(
+        config=BotConfig(dry_run=False),
+        memory=memory,
+        answer_service=answer_service,
+        sender=sender,
+        before_live_answer_send=lambda: drain_answer_reveals(
+            bot,
+            tailer,
+            pending_lines,
+        ),
+        clock=lambda: 100.0,
+    )
+
+    bot.handle_line("[17:40:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] Who created Minecraft?")
+
+    assert sender.sent == []
+    assert bot.memory.lookup("Who created Minecraft?") == "Notch"
+
+
+def test_live_reveal_drain_clears_pending_question_on_math_prompt(tmp_path):
+    sender = FakeSender()
+    answer_service = FakeAnswerService({"Who created Minecraft?": "Jeb"})
+    pending_lines = deque(
+        [
+            "[17:41:00] [Render thread/INFO]: [System] [CHAT] "
+            "[HoloQuiz] 0-(9+12+11+10) = ?\n",
+            "[17:41:09] [Render thread/INFO]: [System] [CHAT] "
+            "[HoloQuiz] No one got the answer! The answer was -42.\n",
+        ]
+    )
+    tailer = FakeTailer()
+    memory = QuizMemory.load(tmp_path / "quiz_memory.json")
+
+    bot = HoloQuizBot(
+        config=BotConfig(dry_run=False),
+        memory=memory,
+        answer_service=answer_service,
+        sender=sender,
+        before_live_answer_send=lambda: drain_answer_reveals(
+            bot,
+            tailer,
+            pending_lines,
+        ),
+        clock=lambda: 100.0,
+    )
+
+    bot.handle_line("[17:40:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] Who created Minecraft?")
+
+    assert sender.sent == []
+    assert bot.memory.lookup("Who created Minecraft?") is None
 
 
 def test_bot_skips_quiz_lines_when_program_disabled(tmp_path):

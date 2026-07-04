@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -44,6 +45,7 @@ class HoloQuizBot:
         answer_service: AnswerService,
         sender: Sender,
         runtime_controls: RuntimeControls | None = None,
+        before_live_answer_send: Callable[[], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.config = config
@@ -51,9 +53,13 @@ class HoloQuizBot:
         self.memory = memory
         self.answer_service = answer_service
         self.sender = sender
+        self._before_live_answer_send = before_live_answer_send
         self.clock = clock
         self.pending_question: PendingQuestion | None = None
         self._last_question_times: dict[str, float] = {}
+
+    def set_before_live_answer_send(self, callback: Callable[[], None] | None) -> None:
+        self._before_live_answer_send = callback
 
     def handle_line(self, line: str) -> None:
         if not self.runtime_controls.is_program_enabled():
@@ -63,6 +69,7 @@ class HoloQuizBot:
         if event is None:
             if is_ignored_math_holoquiz_line(line):
                 self.pending_question = None
+                self.runtime_controls.set_latest_question(None)
             return
 
         if isinstance(event, QuizQuestion):
@@ -82,12 +89,13 @@ class HoloQuizBot:
 
         self._last_question_times[question_key] = now
         self.memory.record_seen(question)
+        self.runtime_controls.set_latest_question(question)
+        self.pending_question = PendingQuestion(
+            question=question,
+            candidate_answer=None,
+        )
 
         if not self.runtime_controls.is_function_enabled(FIND_ANSWER_FUNCTION):
-            self.pending_question = PendingQuestion(
-                question=question,
-                candidate_answer=None,
-            )
             print(f"[disabled] Find answer skipped: {question}")
             return
 
@@ -103,6 +111,11 @@ class HoloQuizBot:
         )
 
         if answer:
+            if source == "codex":
+                if self._answer_was_revealed_while_searching(question):
+                    print(f"[stale] {question} -> {answer} (answer already revealed)")
+                    return
+
             if source == "codex":
                 self.memory.record_answer(question, answer, source="codex")
             print(f"[{source}] {question} -> {answer}")
@@ -128,6 +141,19 @@ class HoloQuizBot:
         )
         print(f"[learned] {pending_question.question} -> {answer}")
         self.pending_question = None
+
+    def _answer_was_revealed_while_searching(self, question: str) -> bool:
+        if self.runtime_controls.get_config().dry_run:
+            return False
+
+        if self._before_live_answer_send is not None:
+            self._before_live_answer_send()
+
+        pending_question = self.pending_question
+        if pending_question is None:
+            return True
+
+        return normalize_question(pending_question.question) != normalize_question(question)
 
 
 def build_bot(
@@ -168,6 +194,25 @@ def build_bot(
     return bot, log_path
 
 
+def drain_answer_reveals(
+    bot: HoloQuizBot,
+    tailer: LogTailer,
+    pending_lines: deque[str],
+) -> None:
+    pending_lines.extend(tailer.read_available())
+    retained_lines: deque[str] = deque()
+
+    while pending_lines:
+        line = pending_lines.popleft()
+        event = parse_log_line(line)
+        if is_ignored_math_holoquiz_line(line) or isinstance(event, AnswerReveal):
+            bot.handle_line(line)
+        else:
+            retained_lines.append(line)
+
+    pending_lines.extend(retained_lines)
+
+
 def run_forever(
     config_path: Path = Path("config.json"),
     poll_seconds: float = 0.2,
@@ -187,9 +232,14 @@ def run_forever(
         print("Dry-run enabled; answers will not be typed into chat.")
 
     tailer = LogTailer(log_path, start_at_end=True)
+    pending_lines: deque[str] = deque()
+    bot.set_before_live_answer_send(
+        lambda: drain_answer_reveals(bot, tailer, pending_lines)
+    )
     while True:
-        for line in tailer.read_available():
-            bot.handle_line(line)
+        pending_lines.extend(tailer.read_available())
+        while pending_lines:
+            bot.handle_line(pending_lines.popleft())
         time.sleep(poll_seconds)
 
 

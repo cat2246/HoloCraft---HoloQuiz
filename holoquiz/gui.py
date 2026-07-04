@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+from collections import deque
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 import queue
+import re
 import threading
 import tkinter as tk
 from tkinter import ttk
+from typing import Callable
+from urllib.parse import quote_plus
+import webbrowser
 
 from holoquiz.config import load_config
 from holoquiz.log_tailer import LogTailer
-from holoquiz.runner import build_bot
+from holoquiz.runner import build_bot, drain_answer_reveals
 from holoquiz.runtime import RuntimeControls
+
+
+GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
+BLANK_MARKER_PATTERN = re.compile(r"(?<!\w)(?:-{4,}|\?{4,}|_{4,})(?!\w)")
 
 
 @dataclass(frozen=True)
@@ -21,8 +30,13 @@ class ControlResult:
 
 
 class ControlPanelController:
-    def __init__(self, controls: RuntimeControls) -> None:
+    def __init__(
+        self,
+        controls: RuntimeControls,
+        browser_open: Callable[[str], object] | None = None,
+    ) -> None:
         self.controls = controls
+        self._browser_open = browser_open or webbrowser.open
 
     def set_program_enabled(self, enabled: bool) -> None:
         self.controls.set_program_enabled(enabled)
@@ -66,6 +80,27 @@ class ControlPanelController:
             True,
             f"Send delay set to {min_seconds:g}-{max_seconds:g} seconds.",
         )
+
+    def open_browser_search(self) -> ControlResult:
+        question = self.controls.get_latest_question()
+        if not question:
+            return ControlResult(False, "No HoloQuiz question to search yet.")
+
+        query = build_browser_search_query(question)
+        if not query:
+            return ControlResult(False, "No searchable HoloQuiz question text found.")
+
+        self._browser_open(f"{GOOGLE_SEARCH_URL}{quote_plus(query)}")
+        return ControlResult(True, f"Browser search opened: {query}")
+
+
+def build_browser_search_query(question: str) -> str:
+    query = BLANK_MARKER_PATTERN.sub(" ", question)
+    query = re.sub(r"(?i)\bfor some reason\b,?", " ", query)
+    query = re.sub(r"(?i)\btrivia\b:?", " ", query)
+    query = re.sub(r"[’']s\b", "", query)
+    query = re.sub(r"[^\w\s]+", " ", query, flags=re.UNICODE)
+    return " ".join(query.split())
 
 
 class QueueLogWriter:
@@ -133,9 +168,14 @@ class BotWorker:
                 print("Dry-run enabled; answers will not be typed into chat.")
 
             tailer = LogTailer(log_path, start_at_end=True)
+            pending_lines: deque[str] = deque()
+            bot.set_before_live_answer_send(
+                lambda: drain_answer_reveals(bot, tailer, pending_lines)
+            )
             while not self._stop_event.is_set():
-                for line in tailer.read_available():
-                    bot.handle_line(line)
+                pending_lines.extend(tailer.read_available())
+                while pending_lines:
+                    bot.handle_line(pending_lines.popleft())
                 self._stop_event.wait(self.poll_seconds)
             print("Bot worker stopped.")
             writer.flush()
@@ -162,6 +202,7 @@ class HoloQuizControlPanel:
         self.delay_max_var = tk.StringVar(value=f"{snapshot.send_delay_max_seconds:g}")
         self.status_var = tk.StringVar(value="Starting")
         self.delay_status_var = tk.StringVar(value="")
+        self.browser_search_status_var = tk.StringVar(value="")
         self.function_vars: dict[str, tk.BooleanVar] = {}
 
         self._build_ui()
@@ -235,6 +276,7 @@ class HoloQuizControlPanel:
         function_frame = ttk.LabelFrame(outer, text="Functions", padding=10)
         function_frame.grid(row=3, column=0, sticky="new", pady=(0, 10))
         function_frame.columnconfigure(0, weight=1)
+        function_frame.columnconfigure(1, weight=1)
         for row, function in enumerate(self.controls.registry.all()):
             enabled = self.controls.is_function_enabled(function.key)
             variable = tk.BooleanVar(value=enabled)
@@ -245,6 +287,16 @@ class HoloQuizControlPanel:
                 variable=variable,
                 command=lambda key=function.key: self._on_function_toggle(key),
             ).grid(row=row, column=0, sticky="w")
+        browser_row = len(self.controls.registry.all())
+        ttk.Button(
+            function_frame,
+            text="Browser search",
+            command=self._on_browser_search,
+        ).grid(row=browser_row, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(
+            function_frame,
+            textvariable=self.browser_search_status_var,
+        ).grid(row=browser_row, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
         log_frame = ttk.LabelFrame(outer, text="Log", padding=8)
         log_frame.grid(row=4, column=0, sticky="nsew")
@@ -281,6 +333,10 @@ class HoloQuizControlPanel:
             snapshot = self.controls.snapshot()
             self.delay_min_var.set(f"{snapshot.send_delay_min_seconds:g}")
             self.delay_max_var.set(f"{snapshot.send_delay_max_seconds:g}")
+
+    def _on_browser_search(self) -> None:
+        result = self.controller.open_browser_search()
+        self.browser_search_status_var.set(result.message)
 
     def _refresh_status(self) -> None:
         self._update_status_text()

@@ -36,6 +36,7 @@ class RuntimeSnapshot:
     send_delay_seconds: float
     send_delay_min_seconds: float
     send_delay_max_seconds: float
+    latest_question: str | None
     functions: dict[str, bool]
 
 
@@ -56,6 +57,7 @@ class RuntimeControls:
         self._send_delay_seconds = base_config.send_delay_seconds
         self._send_delay_min_seconds = base_config.send_delay_min_seconds
         self._send_delay_max_seconds = base_config.send_delay_max_seconds
+        self._latest_question: str | None = None
         self._functions = {
             function.key: function.enabled_by_default
             for function in self.registry.all()
@@ -92,6 +94,7 @@ class RuntimeControls:
                 send_delay_seconds=self._send_delay_seconds,
                 send_delay_min_seconds=self._send_delay_min_seconds,
                 send_delay_max_seconds=self._send_delay_max_seconds,
+                latest_question=self._latest_question,
                 functions=dict(self._functions),
             )
 
@@ -106,6 +109,15 @@ class RuntimeControls:
     def set_dry_run(self, enabled: bool) -> None:
         with self._lock:
             self._dry_run = enabled
+
+    def get_latest_question(self) -> str | None:
+        with self._lock:
+            return self._latest_question
+
+    def set_latest_question(self, question: str | None) -> None:
+        clean_question = question.strip() if question else ""
+        with self._lock:
+            self._latest_question = clean_question or None
 
     def set_auto_answer_enabled(self, enabled: bool) -> None:
         with self._lock:

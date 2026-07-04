@@ -1,6 +1,44 @@
 from holoquiz.config import BotConfig
-from holoquiz.gui import ControlPanelController
+from holoquiz.gui import ControlPanelController, build_browser_search_query
 from holoquiz.runtime import FIND_ANSWER_FUNCTION, RuntimeControls
+
+
+def test_build_browser_search_query_removes_holoquiz_prompt_noise():
+    query = build_browser_search_query(
+        "Hololive - Trivia: For some reason, Kronii's -------- is listed "
+        "officially on Urban Dictionary."
+    )
+
+    assert query == "Hololive Kronii is listed officially on Urban Dictionary"
+
+
+def test_control_panel_controller_opens_browser_search_for_latest_question():
+    controls = RuntimeControls.from_config(BotConfig())
+    controls.set_latest_question(
+        "Hololive - Trivia: For some reason, Kronii's -------- is listed "
+        "officially on Urban Dictionary."
+    )
+    opened_urls = []
+    controller = ControlPanelController(controls, browser_open=opened_urls.append)
+
+    result = controller.open_browser_search()
+
+    assert result.ok is True
+    assert opened_urls == [
+        "https://www.google.com/search?q=Hololive+Kronii+is+listed+officially+on+Urban+Dictionary"
+    ]
+
+
+def test_control_panel_controller_reports_missing_browser_search_question():
+    controls = RuntimeControls.from_config(BotConfig())
+    opened_urls = []
+    controller = ControlPanelController(controls, browser_open=opened_urls.append)
+
+    result = controller.open_browser_search()
+
+    assert result.ok is False
+    assert "No HoloQuiz question" in result.message
+    assert opened_urls == []
 
 
 def test_control_panel_controller_updates_runtime_controls():
