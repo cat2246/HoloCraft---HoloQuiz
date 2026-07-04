@@ -4,6 +4,7 @@ import pytest
 
 from holoquiz.config import BotConfig
 from holoquiz.memory import QuizMemory
+from holoquiz.runtime import FIND_ANSWER_FUNCTION, RuntimeControls
 from holoquiz.runner import HoloQuizBot, build_bot
 
 
@@ -43,6 +44,23 @@ def make_bot(tmp_path, answer_service=None, sender=None, cooldown=3.0):
     )
 
 
+def make_bot_with_controls(
+    tmp_path,
+    controls,
+    answer_service=None,
+    sender=None,
+):
+    memory = QuizMemory.load(tmp_path / "quiz_memory.json")
+    return HoloQuizBot(
+        config=controls.get_config(),
+        memory=memory,
+        answer_service=answer_service or FakeAnswerService({}),
+        sender=sender or FakeSender(),
+        runtime_controls=controls,
+        clock=lambda: 100.0,
+    )
+
+
 def test_bot_answers_from_memory_before_codex(tmp_path):
     sender = FakeSender()
     answer_service = FakeAnswerService({"Who created Minecraft?": "Wrong"})
@@ -53,6 +71,46 @@ def test_bot_answers_from_memory_before_codex(tmp_path):
 
     assert sender.sent == ["Notch"]
     assert answer_service.questions == []
+
+
+def test_bot_skips_quiz_lines_when_program_disabled(tmp_path):
+    controls = RuntimeControls.from_config(BotConfig())
+    controls.set_program_enabled(False)
+    sender = FakeSender()
+    answer_service = FakeAnswerService({"Who created Minecraft?": "Notch"})
+    bot = make_bot_with_controls(
+        tmp_path,
+        controls=controls,
+        answer_service=answer_service,
+        sender=sender,
+    )
+
+    bot.handle_line("[17:40:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] Who created Minecraft?")
+
+    assert sender.sent == []
+    assert answer_service.questions == []
+    assert bot.memory.lookup("Who created Minecraft?") is None
+
+
+def test_bot_skips_answer_lookup_when_find_answer_function_disabled(tmp_path):
+    controls = RuntimeControls.from_config(BotConfig())
+    controls.set_function_enabled(FIND_ANSWER_FUNCTION, False)
+    sender = FakeSender()
+    answer_service = FakeAnswerService({"Who created Minecraft?": "Notch"})
+    bot = make_bot_with_controls(
+        tmp_path,
+        controls=controls,
+        answer_service=answer_service,
+        sender=sender,
+    )
+
+    bot.handle_line("[17:40:00] [Render thread/INFO]: [System] [CHAT] [HoloQuiz] Who created Minecraft?")
+
+    assert sender.sent == []
+    assert answer_service.questions == []
+    assert bot.pending_question is not None
+    assert bot.pending_question.question == "Who created Minecraft?"
+    assert bot.pending_question.candidate_answer is None
 
 
 def test_bot_uses_codex_for_unknown_question(tmp_path):

@@ -17,6 +17,7 @@ from holoquiz.parser import (
     is_ignored_math_holoquiz_line,
     parse_log_line,
 )
+from holoquiz.runtime import FIND_ANSWER_FUNCTION, RuntimeControls
 
 
 class AnswerService(Protocol):
@@ -42,9 +43,11 @@ class HoloQuizBot:
         memory: QuizMemory,
         answer_service: AnswerService,
         sender: Sender,
+        runtime_controls: RuntimeControls | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.config = config
+        self.runtime_controls = runtime_controls or RuntimeControls.from_config(config)
         self.memory = memory
         self.answer_service = answer_service
         self.sender = sender
@@ -53,6 +56,9 @@ class HoloQuizBot:
         self._last_question_times: dict[str, float] = {}
 
     def handle_line(self, line: str) -> None:
+        if not self.runtime_controls.is_program_enabled():
+            return
+
         event = parse_log_line(line)
         if event is None:
             if is_ignored_math_holoquiz_line(line):
@@ -76,6 +82,14 @@ class HoloQuizBot:
 
         self._last_question_times[question_key] = now
         self.memory.record_seen(question)
+
+        if not self.runtime_controls.is_function_enabled(FIND_ANSWER_FUNCTION):
+            self.pending_question = PendingQuestion(
+                question=question,
+                candidate_answer=None,
+            )
+            print(f"[disabled] Find answer skipped: {question}")
+            return
 
         answer = self.memory.lookup(question)
         source = "memory"
@@ -119,8 +133,10 @@ class HoloQuizBot:
 def build_bot(
     config_path: Path = Path("config.json"),
     workspace: Path = Path("."),
+    runtime_controls: RuntimeControls | None = None,
 ) -> tuple[HoloQuizBot, Path]:
     config = load_config(config_path)
+    runtime_controls = runtime_controls or RuntimeControls.from_config(config)
     log_path = config.log_path or discover_default_log_path()
     if log_path is None:
         raise FileNotFoundError(
@@ -133,13 +149,21 @@ def build_bot(
         )
 
     memory = QuizMemory.load(config.memory_path)
-    answer_service = CodexAnswerClient(config=config, workspace=workspace)
-    sender = ChatSender(config=config)
+    answer_service = CodexAnswerClient(
+        config=config,
+        workspace=workspace,
+        config_provider=runtime_controls.get_config,
+    )
+    sender = ChatSender(
+        config=config,
+        config_provider=runtime_controls.get_config,
+    )
     bot = HoloQuizBot(
         config=config,
         memory=memory,
         answer_service=answer_service,
         sender=sender,
+        runtime_controls=runtime_controls,
     )
     return bot, log_path
 
@@ -147,15 +171,19 @@ def build_bot(
 def run_forever(
     config_path: Path = Path("config.json"),
     poll_seconds: float = 0.2,
+    runtime_controls: RuntimeControls | None = None,
 ) -> int:
     try:
-        bot, log_path = build_bot(config_path=config_path)
+        bot, log_path = build_bot(
+            config_path=config_path,
+            runtime_controls=runtime_controls,
+        )
     except FileNotFoundError as error:
         print(error, file=sys.stderr)
         return 2
 
     print(f"Watching {log_path}")
-    if bot.config.dry_run:
+    if bot.runtime_controls.get_config().dry_run:
         print("Dry-run enabled; answers will not be typed into chat.")
 
     tailer = LogTailer(log_path, start_at_end=True)

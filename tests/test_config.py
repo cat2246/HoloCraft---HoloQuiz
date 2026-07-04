@@ -13,6 +13,8 @@ def test_load_config_creates_default_when_missing(tmp_path):
     assert config_path.exists()
     assert json.loads(config_path.read_text(encoding="utf-8")) == {
         "log_path": "",
+        "program_enabled": True,
+        "auto_answer_enabled": True,
         "dry_run": True,
         "codex_command": "codex",
         "codex_model": "gpt-5.4",
@@ -21,6 +23,8 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "codex_enable_search": False,
         "codex_persistent_session": False,
         "send_delay_seconds": 0.8,
+        "send_delay_min_seconds": 0.8,
+        "send_delay_max_seconds": 0.8,
         "question_cooldown_seconds": 3.0,
         "keyboard_open_chat_key": "t",
         "send_mode": "paste",
@@ -35,10 +39,14 @@ def test_load_config_overrides_defaults(tmp_path):
         """
 {
   "log_path": "C:/Minecraft/logs/latest.log",
+  "program_enabled": false,
+  "auto_answer_enabled": false,
   "dry_run": false,
   "codex_model": "gpt-5.4-nano",
   "codex_timeout_seconds": 3,
   "send_delay_seconds": 0.2,
+  "send_delay_min_seconds": 1.0,
+  "send_delay_max_seconds": 3.0,
   "dry_run_sound_path": "C:/Sounds/answer.wav",
   "memory_path": "custom_memory.json"
 }
@@ -49,10 +57,14 @@ def test_load_config_overrides_defaults(tmp_path):
     config = load_config(config_path)
 
     assert config.log_path == Path("C:/Minecraft/logs/latest.log")
+    assert config.program_enabled is False
+    assert config.auto_answer_enabled is False
     assert config.dry_run is False
     assert config.codex_model == "gpt-5.4-nano"
     assert config.codex_timeout_seconds == 3
     assert config.send_delay_seconds == 0.2
+    assert config.send_delay_min_seconds == 1.0
+    assert config.send_delay_max_seconds == 3.0
     assert config.dry_run_sound_path == Path("C:/Sounds/answer.wav")
     assert config.codex_command == "codex"
     assert config.memory_path == Path("custom_memory.json")
@@ -103,3 +115,17 @@ def test_discover_default_log_path_prefers_existing_latest_log(tmp_path, monkeyp
     monkeypatch.setenv("USERPROFILE", str(userprofile))
 
     assert discover_default_log_path() == expected
+
+
+def test_load_config_uses_single_delay_for_missing_delay_range(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"send_delay_seconds": 1.5}),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.send_delay_seconds == 1.5
+    assert config.send_delay_min_seconds == 1.5
+    assert config.send_delay_max_seconds == 1.5

@@ -10,6 +10,8 @@ from typing import Any
 @dataclass(frozen=True)
 class BotConfig:
     log_path: Path | None = None
+    program_enabled: bool = True
+    auto_answer_enabled: bool = True
     dry_run: bool = True
     dry_run_sound_path: Path | None = Path(
         r"C:\Users\limwi\Downloads\gawr-gura-a.wav"
@@ -21,6 +23,8 @@ class BotConfig:
     codex_enable_search: bool = False
     codex_persistent_session: bool = False
     send_delay_seconds: float = 0.8
+    send_delay_min_seconds: float = 0.8
+    send_delay_max_seconds: float = 0.8
     question_cooldown_seconds: float = 3.0
     keyboard_open_chat_key: str = "t"
     send_mode: str = "paste"
@@ -83,6 +87,16 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
             Path(values["dry_run_sound_path"])
             if values["dry_run_sound_path"]
             else None
+        )
+    if "send_delay_min_seconds" not in values:
+        values["send_delay_min_seconds"] = values.get(
+            "send_delay_seconds",
+            BotConfig.send_delay_seconds,
+        )
+    if "send_delay_max_seconds" not in values:
+        values["send_delay_max_seconds"] = values.get(
+            "send_delay_seconds",
+            BotConfig.send_delay_seconds,
         )
 
     return BotConfig(**values)

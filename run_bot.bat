@@ -14,7 +14,7 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-".venv\Scripts\python.exe" holoquiz_bot.py
+".venv\Scripts\python.exe" holoquiz_gui.py
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if not "%EXIT_CODE%"=="0" (

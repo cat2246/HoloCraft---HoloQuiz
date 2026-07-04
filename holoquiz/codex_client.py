@@ -8,6 +8,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from holoquiz.config import BotConfig
 
@@ -59,23 +60,25 @@ def clean_answer(output: str) -> str | None:
 class CodexAnswerClient:
     config: BotConfig
     workspace: Path
+    config_provider: Callable[[], BotConfig] | None = None
     last_debug_log: str | None = field(default=None, init=False)
 
     def ask(self, question: str) -> str | None:
+        config = self._current_config()
         self.last_debug_log = None
         prompt = build_prompt(question)
         output_path = self._create_output_path()
-        command: list[str | Path] = [_resolve_command(self.config.codex_command)]
-        if self.config.codex_enable_search:
+        command: list[str | Path] = [_resolve_command(config.codex_command)]
+        if config.codex_enable_search:
             command.append("--search")
         command.extend(["--ask-for-approval", "never"])
         command.extend(
             [
                 "exec",
                 "-c",
-                f'model_reasoning_effort="{self.config.codex_reasoning_effort}"',
+                f'model_reasoning_effort="{config.codex_reasoning_effort}"',
                 "-m",
-                self.config.codex_model,
+                config.codex_model,
                 "--sandbox",
                 "read-only",
                 "--ephemeral",
@@ -90,7 +93,7 @@ class CodexAnswerClient:
         try:
             result = subprocess.run(
                 command,
-                timeout=self.config.codex_timeout_seconds,
+                timeout=config.codex_timeout_seconds,
                 check=True,
                 capture_output=True,
                 input=prompt,
@@ -206,6 +209,11 @@ class CodexAnswerClient:
         with log_path.open("a", encoding="utf-8") as log_file:
             log_file.write(debug_log)
             log_file.write("\n\n")
+
+    def _current_config(self) -> BotConfig:
+        if self.config_provider is None:
+            return self.config
+        return self.config_provider()
 
 
 def _error_stdout(

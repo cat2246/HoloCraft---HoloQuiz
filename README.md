@@ -31,7 +31,22 @@ Set `log_path` if automatic discovery cannot find your Minecraft or TLauncher lo
 
 Keep `dry_run` as `true` until you confirm the bot detects the correct questions. If the bot prints `No Minecraft latest.log found`, set `log_path` to the real `latest.log` path before running again.
 
-## Run
+## Run With GUI
+
+```powershell
+python holoquiz_gui.py
+```
+
+Or double-click `run_bot.bat`.
+
+The control panel starts the bot in the background and lets you change live behavior:
+
+- `Whole program` pauses or resumes quiz processing.
+- `Dry-run` switches between previewing answers and sending them to Minecraft chat.
+- `Send delay seconds` accepts a minimum and maximum. If you enter `1` to `3`, each answer waits for a random delay between 1 and 3 seconds before live sending.
+- `Functions > Find answer` toggles the current auto answer function. Future functions can be added as more rows in this section.
+
+## Run Without GUI
 
 ```powershell
 python holoquiz_bot.py

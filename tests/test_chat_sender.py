@@ -1,5 +1,6 @@
 from holoquiz.chat_sender import ChatSender
 from holoquiz.config import BotConfig
+from holoquiz.runtime import RuntimeControls
 
 
 class FakePyAutoGui:
@@ -83,6 +84,68 @@ def test_live_sender_pastes_answer_by_default(monkeypatch, capsys):
         ("press", "enter"),
     ]
     assert "[send] Sent answer via paste: Creeper" in capsys.readouterr().out
+
+
+def test_sender_uses_live_runtime_config(monkeypatch, capsys):
+    fake = FakePyAutoGui()
+    clipboard = FakeClipboard()
+    sleep_calls = []
+    monkeypatch.setattr("time.sleep", lambda seconds: sleep_calls.append(seconds))
+    controls = RuntimeControls.from_config(
+        BotConfig(dry_run=True, send_delay_seconds=0.8)
+    )
+    sender = ChatSender(
+        controls.get_config(),
+        config_provider=controls.get_config,
+        pyautogui_module=fake,
+        clipboard_module=clipboard,
+    )
+
+    controls.set_dry_run(False)
+    controls.set_send_delay_seconds(1.5)
+    sender.send("Creeper")
+
+    assert sleep_calls == [1.5]
+    assert clipboard.values == ["Creeper"]
+    assert fake.calls == [
+        ("press", "t"),
+        ("hotkey", "ctrl", "v"),
+        ("press", "enter"),
+    ]
+    assert "[send] Sent answer via paste: Creeper" in capsys.readouterr().out
+
+
+def test_live_sender_uses_random_delay_range(monkeypatch):
+    fake = FakePyAutoGui()
+    clipboard = FakeClipboard()
+    sleep_calls = []
+    random_calls = []
+    monkeypatch.setattr("time.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    def fake_uniform(min_seconds, max_seconds):
+        random_calls.append((min_seconds, max_seconds))
+        return 2.25
+
+    monkeypatch.setattr("holoquiz.chat_sender.random.uniform", fake_uniform)
+    sender = ChatSender(
+        BotConfig(
+            dry_run=False,
+            send_delay_min_seconds=1.0,
+            send_delay_max_seconds=3.0,
+        ),
+        pyautogui_module=fake,
+        clipboard_module=clipboard,
+    )
+
+    sender.send("Creeper")
+
+    assert random_calls == [(1.0, 3.0)]
+    assert sleep_calls == [2.25]
+    assert fake.calls == [
+        ("press", "t"),
+        ("hotkey", "ctrl", "v"),
+        ("press", "enter"),
+    ]
 
 
 def test_live_sender_can_type_answer(monkeypatch):

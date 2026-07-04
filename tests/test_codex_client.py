@@ -3,6 +3,7 @@ import shutil
 
 from holoquiz.config import BotConfig
 from holoquiz.codex_client import CodexAnswerClient, build_prompt, clean_answer
+from holoquiz.runtime import RuntimeControls
 
 
 def test_build_prompt_includes_examples_and_question():
@@ -117,6 +118,37 @@ def test_ask_inserts_search_flag_before_exec(tmp_path, monkeypatch):
 
     assert client.ask("What mob explodes near players?") == "Creeper"
     assert calls[0][:5] == ["codex", "--search", "--ask-for-approval", "never", "exec"]
+
+
+def test_ask_uses_live_runtime_config(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(command, timeout, check, capture_output, text, input, **kwargs):
+        calls.append({"command": command, "timeout": timeout})
+        output_path = command[command.index("--output-last-message") + 1]
+        output_path.write_text("Creeper\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(shutil, "which", lambda command: None)
+    live_config = BotConfig(codex_enable_search=False, codex_timeout_seconds=6)
+    client = CodexAnswerClient(
+        config=live_config,
+        workspace=tmp_path,
+        config_provider=lambda: live_config,
+    )
+
+    live_config = BotConfig(codex_enable_search=True, codex_timeout_seconds=6)
+
+    assert client.ask("What mob explodes near players?") == "Creeper"
+    assert calls[0]["command"][:5] == [
+        "codex",
+        "--search",
+        "--ask-for-approval",
+        "never",
+        "exec",
+    ]
+    assert calls[0]["timeout"] == 6
 
 
 def test_ask_uses_resolved_codex_command_path(tmp_path, monkeypatch):
