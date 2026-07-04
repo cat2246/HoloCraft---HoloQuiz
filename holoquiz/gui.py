@@ -20,6 +20,7 @@ from holoquiz.runtime import RuntimeControls
 
 
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
+BROWSER_SEARCH_STATUS_MAX_CHARS = 58
 BLANK_MARKER_PATTERN = re.compile(r"(?<!\w)(?:-{4,}|\?{4,}|_{4,})(?!\w)")
 
 
@@ -91,16 +92,30 @@ class ControlPanelController:
             return ControlResult(False, "No searchable HoloQuiz question text found.")
 
         self._browser_open(f"{GOOGLE_SEARCH_URL}{quote_plus(query)}")
-        return ControlResult(True, f"Browser search opened: {query}")
+        return ControlResult(
+            True,
+            ellipsize_text(
+                f"Browser search opened: {query}",
+                BROWSER_SEARCH_STATUS_MAX_CHARS,
+            ),
+        )
 
 
 def build_browser_search_query(question: str) -> str:
     query = BLANK_MARKER_PATTERN.sub(" ", question)
     query = re.sub(r"(?i)\bfor some reason\b,?", " ", query)
     query = re.sub(r"(?i)\btrivia\b:?", " ", query)
-    query = re.sub(r"[’']s\b", "", query)
+    query = re.sub(r"(?:'|\u2019)s\b", "", query)
     query = re.sub(r"[^\w\s]+", " ", query, flags=re.UNICODE)
     return " ".join(query.split())
+
+
+def ellipsize_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 3:
+        return "." * max_chars
+    return f"{text[: max_chars - 3].rstrip()}..."
 
 
 class QueueLogWriter:
@@ -275,7 +290,7 @@ class HoloQuizControlPanel:
 
         function_frame = ttk.LabelFrame(outer, text="Functions", padding=10)
         function_frame.grid(row=3, column=0, sticky="new", pady=(0, 10))
-        function_frame.columnconfigure(0, weight=1)
+        function_frame.columnconfigure(0, weight=0)
         function_frame.columnconfigure(1, weight=1)
         for row, function in enumerate(self.controls.registry.all()):
             enabled = self.controls.is_function_enabled(function.key)
@@ -286,7 +301,7 @@ class HoloQuizControlPanel:
                 text=function.label,
                 variable=variable,
                 command=lambda key=function.key: self._on_function_toggle(key),
-            ).grid(row=row, column=0, sticky="w")
+            ).grid(row=row, column=0, columnspan=2, sticky="w")
         browser_row = len(self.controls.registry.all())
         ttk.Button(
             function_frame,
@@ -296,7 +311,8 @@ class HoloQuizControlPanel:
         ttk.Label(
             function_frame,
             textvariable=self.browser_search_status_var,
-        ).grid(row=browser_row, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+            width=BROWSER_SEARCH_STATUS_MAX_CHARS,
+        ).grid(row=browser_row, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
 
         log_frame = ttk.LabelFrame(outer, text="Log", padding=8)
         log_frame.grid(row=4, column=0, sticky="nsew")

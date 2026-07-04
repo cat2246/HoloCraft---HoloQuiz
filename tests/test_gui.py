@@ -1,5 +1,9 @@
 from holoquiz.config import BotConfig
-from holoquiz.gui import ControlPanelController, build_browser_search_query
+from holoquiz.gui import (
+    BROWSER_SEARCH_STATUS_MAX_CHARS,
+    ControlPanelController,
+    build_browser_search_query,
+)
 from holoquiz.runtime import FIND_ANSWER_FUNCTION, RuntimeControls
 
 
@@ -27,6 +31,23 @@ def test_control_panel_controller_opens_browser_search_for_latest_question():
     assert opened_urls == [
         "https://www.google.com/search?q=Hololive+Kronii+is+listed+officially+on+Urban+Dictionary"
     ]
+
+
+def test_control_panel_controller_ellipsizes_long_browser_search_status():
+    controls = RuntimeControls.from_config(BotConfig())
+    controls.set_latest_question(
+        "Minecraft What is the first mob that had its own attack animation "
+        "with moving appendages and a very long extra phrase for search"
+    )
+    opened_urls = []
+    controller = ControlPanelController(controls, browser_open=opened_urls.append)
+
+    result = controller.open_browser_search()
+
+    assert result.ok is True
+    assert len(result.message) <= BROWSER_SEARCH_STATUS_MAX_CHARS
+    assert result.message.endswith("...")
+    assert "moving+appendages+and+a+very+long+extra+phrase" in opened_urls[0]
 
 
 def test_control_panel_controller_reports_missing_browser_search_question():
