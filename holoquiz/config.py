@@ -11,6 +11,9 @@ from typing import Any
 class BotConfig:
     log_path: Path | None = None
     dry_run: bool = True
+    dry_run_sound_path: Path | None = Path(
+        r"C:\Users\limwi\Downloads\gawr-gura-a.wav"
+    )
     codex_command: str = "codex"
     codex_model: str = "gpt-5.4"
     codex_reasoning_effort: str = "low"
@@ -75,6 +78,12 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
         values["log_path"] = Path(values["log_path"]) if values["log_path"] else None
     if "memory_path" in values:
         values["memory_path"] = Path(values["memory_path"])
+    if "dry_run_sound_path" in values:
+        values["dry_run_sound_path"] = (
+            Path(values["dry_run_sound_path"])
+            if values["dry_run_sound_path"]
+            else None
+        )
 
     return BotConfig(**values)
 
@@ -82,5 +91,8 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
 def _config_to_json_dict(config: BotConfig) -> dict[str, Any]:
     values = asdict(config)
     values["log_path"] = str(config.log_path) if config.log_path else ""
+    values["dry_run_sound_path"] = (
+        str(config.dry_run_sound_path) if config.dry_run_sound_path else ""
+    )
     values.pop("memory_path")
     return values

@@ -12,10 +12,12 @@ class ChatSender:
         config: BotConfig,
         pyautogui_module: Any | None = None,
         clipboard_module: Any | None = None,
+        sound_module: Any | None = None,
     ):
         self.config = config
         self._pyautogui = pyautogui_module
         self._clipboard = clipboard_module
+        self._sound = sound_module
 
     def send(self, answer: str) -> None:
         clean_answer = answer.strip()
@@ -23,6 +25,9 @@ class ChatSender:
             return
 
         if self.config.dry_run:
+            clipboard = self._clipboard or self._load_clipboard()
+            clipboard.copy(clean_answer)
+            self._play_dry_run_sound()
             print(f"[dry-run] Would send answer: {clean_answer}")
             return
 
@@ -57,3 +62,21 @@ class ChatSender:
         import pyperclip
 
         return pyperclip
+
+    def _play_dry_run_sound(self) -> None:
+        if not self.config.dry_run_sound_path:
+            return
+
+        try:
+            sound = self._sound or self._load_sound()
+            sound.PlaySound(
+                str(self.config.dry_run_sound_path),
+                sound.SND_FILENAME | sound.SND_ASYNC,
+            )
+        except Exception as exc:
+            print(f"[sound-warning] Could not play dry-run sound: {exc}")
+
+    def _load_sound(self) -> Any:
+        import winsound
+
+        return winsound

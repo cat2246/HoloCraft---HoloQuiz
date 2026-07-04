@@ -25,6 +25,7 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "keyboard_open_chat_key": "t",
         "send_mode": "paste",
         "typing_interval_seconds": 0.01,
+        "dry_run_sound_path": "C:\\Users\\limwi\\Downloads\\gawr-gura-a.wav",
     }
 
 
@@ -38,6 +39,7 @@ def test_load_config_overrides_defaults(tmp_path):
   "codex_model": "gpt-5.4-nano",
   "codex_timeout_seconds": 3,
   "send_delay_seconds": 0.2,
+  "dry_run_sound_path": "C:/Sounds/answer.wav",
   "memory_path": "custom_memory.json"
 }
 """.strip(),
@@ -51,6 +53,7 @@ def test_load_config_overrides_defaults(tmp_path):
     assert config.codex_model == "gpt-5.4-nano"
     assert config.codex_timeout_seconds == 3
     assert config.send_delay_seconds == 0.2
+    assert config.dry_run_sound_path == Path("C:/Sounds/answer.wav")
     assert config.codex_command == "codex"
     assert config.memory_path == Path("custom_memory.json")
 

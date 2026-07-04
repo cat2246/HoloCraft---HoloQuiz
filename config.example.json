@@ -1,6 +1,7 @@
 {
   "log_path": "",
   "dry_run": true,
+  "dry_run_sound_path": "C:\\Users\\limwi\\Downloads\\gawr-gura-a.wav",
   "codex_command": "codex",
   "codex_model": "gpt-5.4",
   "codex_reasoning_effort": "low",

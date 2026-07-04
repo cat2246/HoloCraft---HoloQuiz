@@ -24,13 +24,40 @@ class FakeClipboard:
         self.values.append(text)
 
 
-def test_dry_run_sender_prints_answer(capsys):
-    sender = ChatSender(BotConfig(dry_run=True))
+class FakeSound:
+    SND_FILENAME = 131072
+    SND_ASYNC = 1
 
-    sender.send("Notch")
+    def __init__(self):
+        self.calls = []
+
+    def PlaySound(self, sound_path, flags):
+        self.calls.append((sound_path, flags))
+
+
+def test_dry_run_sender_copies_answer_without_pasting(capsys):
+    fake = FakePyAutoGui()
+    clipboard = FakeClipboard()
+    sound = FakeSound()
+    sender = ChatSender(
+        BotConfig(dry_run=True),
+        pyautogui_module=fake,
+        clipboard_module=clipboard,
+        sound_module=sound,
+    )
+
+    sender.send(" Notch ")
 
     captured = capsys.readouterr()
     assert "[dry-run] Would send answer: Notch" in captured.out
+    assert clipboard.values == ["Notch"]
+    assert sound.calls == [
+        (
+            "C:\\Users\\limwi\\Downloads\\gawr-gura-a.wav",
+            sound.SND_FILENAME | sound.SND_ASYNC,
+        )
+    ]
+    assert fake.calls == []
 
 
 def test_live_sender_pastes_answer_by_default(monkeypatch, capsys):
