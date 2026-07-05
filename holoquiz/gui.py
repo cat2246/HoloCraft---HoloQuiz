@@ -23,7 +23,11 @@ from holoquiz.config import (
 from holoquiz.log_tailer import LogTailer
 from holoquiz.minecraft_text_ocr import read_minecraft_text
 from holoquiz.runner import build_bot, drain_answer_reveals
-from holoquiz.runtime import RuntimeControls, SCREEN_PHRASE_WATCHER_FUNCTION
+from holoquiz.runtime import (
+    FunctionDefinition,
+    RuntimeControls,
+    SCREEN_PHRASE_WATCHER_FUNCTION,
+)
 from holoquiz.screen_phrase_watcher import ScreenPhraseWatcher, ScreenReadRegion
 
 
@@ -592,8 +596,12 @@ class HoloQuizControlPanel:
             padx=(6, 0),
         )
 
-        controls_row = ttk.Frame(outer)
-        controls_row.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        holoquiz_frame = ttk.LabelFrame(outer, text="HoloQuiz", padding=10)
+        holoquiz_frame.grid(row=1, column=0, sticky="new", pady=(0, 10))
+        holoquiz_frame.columnconfigure(1, weight=1)
+
+        controls_row = ttk.Frame(holoquiz_frame)
+        controls_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         controls_row.columnconfigure(2, weight=1)
         ttk.Checkbutton(
             controls_row,
@@ -608,8 +616,8 @@ class HoloQuizControlPanel:
             command=self._on_dry_run_toggle,
         ).grid(row=0, column=1, sticky="w", padx=(0, 16))
 
-        delay_row = ttk.Frame(outer)
-        delay_row.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        delay_row = ttk.Frame(holoquiz_frame)
+        delay_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         delay_row.columnconfigure(4, weight=1)
         ttk.Label(delay_row, text="Send delay seconds").grid(
             row=0,
@@ -635,52 +643,61 @@ class HoloQuizControlPanel:
             padx=(8, 0),
         )
 
-        function_frame = ttk.LabelFrame(outer, text="Functions", padding=10)
-        function_frame.grid(row=3, column=0, sticky="new", pady=(0, 10))
-        function_frame.columnconfigure(0, weight=0)
-        function_frame.columnconfigure(1, weight=1)
-        for row, function in enumerate(self.controls.registry.all()):
-            enabled = self.controls.is_function_enabled(function.key)
-            variable = tk.BooleanVar(value=enabled)
-            self.function_vars[function.key] = variable
+        function_definitions = {
+            function.key: function for function in self.controls.registry.all()
+        }
+        holoquiz_function_row = 2
+        for function in self.controls.registry.all():
             if function.key == SCREEN_PHRASE_WATCHER_FUNCTION:
-                row_frame = ttk.Frame(function_frame)
-                row_frame.grid(row=row, column=0, columnspan=2, sticky="w")
-                ttk.Checkbutton(
-                    row_frame,
-                    text=function.label,
-                    variable=variable,
-                    command=lambda key=function.key: self._on_function_toggle(key),
-                ).grid(row=0, column=0, sticky="w")
-                ttk.Checkbutton(
-                    row_frame,
-                    text="Debug OCR log",
-                    variable=self.screen_phrase_debug_var,
-                ).grid(row=0, column=1, sticky="w", padx=(12, 0))
-            else:
-                ttk.Checkbutton(
-                    function_frame,
-                    text=function.label,
-                    variable=variable,
-                    command=lambda key=function.key: self._on_function_toggle(key),
-                ).grid(row=row, column=0, columnspan=2, sticky="w")
-        browser_row = len(self.controls.registry.all())
+                continue
+            self._add_function_checkbutton(
+                holoquiz_frame,
+                function,
+                row=holoquiz_function_row,
+            )
+            holoquiz_function_row += 1
+
+        browser_row = holoquiz_function_row
         ttk.Button(
-            function_frame,
+            holoquiz_frame,
             text="Browser search",
             command=self._on_browser_search,
         ).grid(row=browser_row, column=0, sticky="w", pady=(8, 0))
         ttk.Label(
-            function_frame,
+            holoquiz_frame,
             textvariable=self.browser_search_status_var,
             width=BROWSER_SEARCH_STATUS_MAX_CHARS,
         ).grid(row=browser_row, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
-        screen_phrase_row = browser_row + 1
-        screen_phrase_frame = ttk.Frame(function_frame)
+
+        trigger_phase_frame = ttk.LabelFrame(outer, text="Trigger Phase", padding=10)
+        trigger_phase_frame.grid(row=2, column=0, sticky="new", pady=(0, 10))
+        trigger_phase_frame.columnconfigure(0, weight=1)
+
+        screen_phrase_function = function_definitions.get(SCREEN_PHRASE_WATCHER_FUNCTION)
+        if screen_phrase_function is not None:
+            enabled = self.controls.is_function_enabled(screen_phrase_function.key)
+            variable = tk.BooleanVar(value=enabled)
+            self.function_vars[screen_phrase_function.key] = variable
+            row_frame = ttk.Frame(trigger_phase_frame)
+            row_frame.grid(row=0, column=0, sticky="w")
+            ttk.Checkbutton(
+                row_frame,
+                text=screen_phrase_function.label,
+                variable=variable,
+                command=lambda key=screen_phrase_function.key: self._on_function_toggle(
+                    key
+                ),
+            ).grid(row=0, column=0, sticky="w")
+            ttk.Checkbutton(
+                row_frame,
+                text="Debug OCR log",
+                variable=self.screen_phrase_debug_var,
+            ).grid(row=0, column=1, sticky="w", padx=(12, 0))
+
+        screen_phrase_frame = ttk.Frame(trigger_phase_frame)
         screen_phrase_frame.grid(
-            row=screen_phrase_row,
+            row=1,
             column=0,
-            columnspan=2,
             sticky="ew",
             pady=(10, 0),
         )
@@ -712,8 +729,8 @@ class HoloQuizControlPanel:
         ).grid(row=1, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=(6, 0))
 
         log_frame = ttk.LabelFrame(outer, text="Log", padding=8)
-        log_frame.grid(row=4, column=0, sticky="nsew")
-        outer.rowconfigure(4, weight=1)
+        log_frame.grid(row=3, column=0, sticky="nsew")
+        outer.rowconfigure(3, weight=1)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self.log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled")
@@ -725,6 +742,23 @@ class HoloQuizControlPanel:
         )
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.log_text.configure(yscrollcommand=scrollbar.set)
+
+    def _add_function_checkbutton(
+        self,
+        parent: ttk.Frame,
+        function: FunctionDefinition,
+        *,
+        row: int,
+    ) -> None:
+        enabled = self.controls.is_function_enabled(function.key)
+        variable = tk.BooleanVar(value=enabled)
+        self.function_vars[function.key] = variable
+        ttk.Checkbutton(
+            parent,
+            text=function.label,
+            variable=variable,
+            command=lambda key=function.key: self._on_function_toggle(key),
+        ).grid(row=row, column=0, columnspan=2, sticky="w")
 
     def _on_program_toggle(self) -> None:
         self.controller.set_program_enabled(self.program_var.get())
