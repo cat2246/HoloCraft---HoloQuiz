@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Minecraft HoloQuiz helper that learns answers and can type them into chat."
 requires-python = ">=3.10"
 dependencies = [
+  "pillow>=10.0",
   "pyautogui>=0.9.54",
+  "pytesseract>=0.3.13",
   "pyperclip>=1.8.2"
 ]
 
@@ -16,3 +18,6 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.setuptools.package-data]
+holoquiz = ["assets/*.ttf"]

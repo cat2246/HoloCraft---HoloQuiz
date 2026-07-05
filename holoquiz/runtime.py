@@ -7,6 +7,7 @@ from holoquiz.config import BotConfig
 
 
 FIND_ANSWER_FUNCTION = "find_answer"
+SCREEN_PHRASE_WATCHER_FUNCTION = "screen_phrase_watcher"
 
 
 @dataclass(frozen=True)
@@ -169,6 +170,11 @@ def default_function_registry() -> FunctionRegistry:
                 key=FIND_ANSWER_FUNCTION,
                 label="Find answer",
                 enabled_by_default=True,
+            ),
+            FunctionDefinition(
+                key=SCREEN_PHRASE_WATCHER_FUNCTION,
+                label="Screen phrase watcher",
+                enabled_by_default=False,
             )
         ]
     )

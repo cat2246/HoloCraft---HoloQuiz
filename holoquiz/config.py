@@ -8,6 +8,14 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class ScreenPhraseRegionConfig:
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
 class BotConfig:
     log_path: Path | None = None
     program_enabled: bool = True
@@ -30,6 +38,9 @@ class BotConfig:
     send_mode: str = "paste"
     typing_interval_seconds: float = 0.01
     memory_path: Path = Path("quiz_memory.json")
+    screen_phrase_trigger: str = ""
+    screen_phrase_trigger_region: ScreenPhraseRegionConfig | None = None
+    screen_phrase_result_region: ScreenPhraseRegionConfig | None = None
 
 
 def discover_default_log_path() -> Path | None:
@@ -98,8 +109,57 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
             "send_delay_seconds",
             BotConfig.send_delay_seconds,
         )
+    if "screen_phrase_trigger_region" in values:
+        values["screen_phrase_trigger_region"] = _region_from_json(
+            values["screen_phrase_trigger_region"]
+        )
+    if "screen_phrase_result_region" in values:
+        values["screen_phrase_result_region"] = _region_from_json(
+            values["screen_phrase_result_region"]
+        )
 
     return BotConfig(**values)
+
+
+def save_screen_phrase_settings(
+    path: Path,
+    *,
+    trigger: str,
+    trigger_region: ScreenPhraseRegionConfig | None,
+    result_region: ScreenPhraseRegionConfig | None,
+) -> None:
+    raw_config: dict[str, Any] = {}
+    if path.exists():
+        raw_config = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(raw_config, dict):
+            raise ValueError("Config root must be a JSON object.")
+
+    raw_config["screen_phrase_trigger"] = trigger
+    raw_config["screen_phrase_trigger_region"] = _region_to_json(trigger_region)
+    raw_config["screen_phrase_result_region"] = _region_to_json(result_region)
+    path.write_text(
+        json.dumps(raw_config, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _region_from_json(value: Any) -> ScreenPhraseRegionConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("Screen phrase region must be an object or null.")
+    return ScreenPhraseRegionConfig(
+        x=int(value["x"]),
+        y=int(value["y"]),
+        width=int(value["width"]),
+        height=int(value["height"]),
+    )
+
+
+def _region_to_json(region: ScreenPhraseRegionConfig | None) -> dict[str, int] | None:
+    if region is None:
+        return None
+    return asdict(region)
 
 
 def _config_to_json_dict(config: BotConfig) -> dict[str, Any]:

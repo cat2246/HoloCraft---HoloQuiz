@@ -1,5 +1,10 @@
 from holoquiz.config import BotConfig
-from holoquiz.runtime import RuntimeControls, default_function_registry
+from holoquiz.runtime import (
+    FIND_ANSWER_FUNCTION,
+    SCREEN_PHRASE_WATCHER_FUNCTION,
+    RuntimeControls,
+    default_function_registry,
+)
 
 
 def test_default_function_registry_contains_find_answer():
@@ -7,9 +12,14 @@ def test_default_function_registry_contains_find_answer():
 
     functions = registry.all()
 
-    assert [function.key for function in functions] == ["find_answer"]
+    assert [function.key for function in functions] == [
+        FIND_ANSWER_FUNCTION,
+        SCREEN_PHRASE_WATCHER_FUNCTION,
+    ]
     assert functions[0].label == "Find answer"
     assert functions[0].enabled_by_default is True
+    assert functions[1].label == "Screen phrase watcher"
+    assert functions[1].enabled_by_default is False
 
 
 def test_runtime_controls_merge_live_values_into_config():

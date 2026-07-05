@@ -1,7 +1,13 @@
 import json
 from pathlib import Path
 
-from holoquiz.config import BotConfig, discover_default_log_path, load_config
+from holoquiz.config import (
+    BotConfig,
+    ScreenPhraseRegionConfig,
+    discover_default_log_path,
+    load_config,
+    save_screen_phrase_settings,
+)
 
 
 def test_load_config_creates_default_when_missing(tmp_path):
@@ -30,6 +36,9 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "send_mode": "paste",
         "typing_interval_seconds": 0.01,
         "dry_run_sound_path": "C:\\Users\\limwi\\Downloads\\gawr-gura-a.wav",
+        "screen_phrase_trigger": "",
+        "screen_phrase_trigger_region": None,
+        "screen_phrase_result_region": None,
     }
 
 
@@ -129,3 +138,81 @@ def test_load_config_uses_single_delay_for_missing_delay_range(tmp_path):
     assert config.send_delay_seconds == 1.5
     assert config.send_delay_min_seconds == 1.5
     assert config.send_delay_max_seconds == 1.5
+
+
+def test_load_config_reads_screen_phrase_settings(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "screen_phrase_trigger": "Afk, again?",
+                "screen_phrase_trigger_region": {
+                    "x": 100,
+                    "y": 200,
+                    "width": 300,
+                    "height": 40,
+                },
+                "screen_phrase_result_region": {
+                    "x": 110,
+                    "y": 260,
+                    "width": 320,
+                    "height": 50,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.screen_phrase_trigger == "Afk, again?"
+    assert config.screen_phrase_trigger_region == ScreenPhraseRegionConfig(
+        x=100,
+        y=200,
+        width=300,
+        height=40,
+    )
+    assert config.screen_phrase_result_region == ScreenPhraseRegionConfig(
+        x=110,
+        y=260,
+        width=320,
+        height=50,
+    )
+
+
+def test_save_screen_phrase_settings_preserves_existing_config(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "dry_run": False,
+                "screen_phrase_trigger": "",
+                "screen_phrase_trigger_region": None,
+                "screen_phrase_result_region": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    save_screen_phrase_settings(
+        config_path,
+        trigger="Afk, again?",
+        trigger_region=ScreenPhraseRegionConfig(100, 200, 300, 40),
+        result_region=ScreenPhraseRegionConfig(110, 260, 320, 50),
+    )
+
+    raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert raw_config["dry_run"] is False
+    assert raw_config["screen_phrase_trigger"] == "Afk, again?"
+    assert raw_config["screen_phrase_trigger_region"] == {
+        "x": 100,
+        "y": 200,
+        "width": 300,
+        "height": 40,
+    }
+    assert raw_config["screen_phrase_result_region"] == {
+        "x": 110,
+        "y": 260,
+        "width": 320,
+        "height": 50,
+    }
