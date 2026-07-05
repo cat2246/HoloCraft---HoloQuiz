@@ -20,4 +20,4 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.setuptools.package-data]
-holoquiz = ["assets/*.ttf"]
+holoquiz = ["assets/*.ttf", "assets/*.wav"]

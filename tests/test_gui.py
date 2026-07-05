@@ -152,6 +152,38 @@ def test_screen_phrase_worker_debug_logs_ocr_details():
     assert "reason: trigger phrase not found" in debug_log
 
 
+def test_screen_phrase_worker_plays_trigger_sound_once_per_cooldown():
+    controls = RuntimeControls.from_config(BotConfig())
+    controls.set_function_enabled(SCREEN_PHRASE_WATCHER_FUNCTION, True)
+    reads = {
+        ScreenReadRegion(10, 20, 300, 40): "You are now AFK",
+        ScreenReadRegion(30, 80, 420, 60): "Don't eat too much cookies",
+    }
+    watcher = ScreenPhraseWatcher(text_reader=reads.__getitem__)
+    watcher.set_trigger_region(ScreenReadRegion(10, 20, 300, 40))
+    watcher.set_result_region(ScreenReadRegion(30, 80, 420, 60))
+    watcher.set_trigger_phrase("You are now AFK")
+    log_queue: queue.Queue[str] = queue.Queue()
+    now = 100.0
+    sound_calls = []
+    worker = ScreenPhraseWorker(
+        controls,
+        watcher,
+        log_queue,
+        trigger_sound_player=lambda: sound_calls.append(now),
+        trigger_sound_cooldown_seconds=30.0,
+        monotonic_seconds=lambda: now,
+    )
+
+    worker._check_screen()
+    now = 110.0
+    worker._check_screen()
+    now = 130.0
+    worker._check_screen()
+
+    assert sound_calls == [100.0, 130.0]
+
+
 def test_ocr_screen_text_reader_returns_unique_text_from_multiple_passes():
     from PIL import Image
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import queue
 import re
 import threading
+from time import monotonic
 import tkinter as tk
 from tkinter import ttk
 from typing import Any, Callable
@@ -29,6 +30,8 @@ from holoquiz.screen_phrase_watcher import ScreenPhraseWatcher, ScreenReadRegion
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
 BROWSER_SEARCH_STATUS_MAX_CHARS = 58
 BLANK_MARKER_PATTERN = re.compile(r"(?<!\w)(?:-{4,}|\?{4,}|_{4,})(?!\w)")
+TRIGGER_SOUND_PATH = Path(__file__).with_name("assets") / "gura-wakeup-1.wav"
+TRIGGER_SOUND_COOLDOWN_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -304,6 +307,15 @@ class OcrScreenTextReader:
         return self._upscale_for_ocr(cropped_mask, scale=scale)
 
 
+def play_trigger_sound(sound_path: Path = TRIGGER_SOUND_PATH) -> None:
+    import winsound
+
+    winsound.PlaySound(
+        str(sound_path),
+        winsound.SND_FILENAME | winsound.SND_ASYNC,
+    )
+
+
 class ScreenPhraseWorker:
     def __init__(
         self,
@@ -312,12 +324,19 @@ class ScreenPhraseWorker:
         log_queue: queue.Queue[str],
         poll_seconds: float = 1.0,
         debug_enabled_provider: Callable[[], bool] | None = None,
+        trigger_sound_player: Callable[[], None] | None = None,
+        trigger_sound_cooldown_seconds: float = TRIGGER_SOUND_COOLDOWN_SECONDS,
+        monotonic_seconds: Callable[[], float] | None = None,
     ) -> None:
         self.controls = controls
         self.watcher = watcher
         self.log_queue = log_queue
         self.poll_seconds = poll_seconds
         self._debug_enabled_provider = debug_enabled_provider or (lambda: False)
+        self._trigger_sound_player = trigger_sound_player or play_trigger_sound
+        self._trigger_sound_cooldown_seconds = trigger_sound_cooldown_seconds
+        self._monotonic_seconds = monotonic_seconds or monotonic
+        self._last_trigger_sound_at: float | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_error = ""
@@ -365,12 +384,33 @@ class ScreenPhraseWorker:
         if self._debug_enabled_provider():
             self._log_debug_result(result)
 
+        if result.trigger_matched:
+            self._play_trigger_sound_if_ready()
+
         event = result.event
         if event is not None:
             self.log_queue.put(
                 "[screen-phrase-watcher] "
                 f'Trigger "{event.trigger_phrase}" found; '
                 f"result area read: {event.result_text}"
+            )
+
+    def _play_trigger_sound_if_ready(self) -> None:
+        now = self._monotonic_seconds()
+        if (
+            self._last_trigger_sound_at is not None
+            and now - self._last_trigger_sound_at
+            < self._trigger_sound_cooldown_seconds
+        ):
+            return
+
+        self._last_trigger_sound_at = now
+        try:
+            self._trigger_sound_player()
+        except Exception as error:
+            self.log_queue.put(
+                "[screen-phrase-watcher-error] "
+                f"Could not play trigger sound: {error}"
             )
 
     def _log_debug_result(self, result: object) -> None:
