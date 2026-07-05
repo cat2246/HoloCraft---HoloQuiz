@@ -45,7 +45,7 @@ The control panel starts the bot in the background and lets you change live beha
 - `Dry-run` switches between previewing answers and sending them to Minecraft chat.
 - `Send delay seconds` accepts a minimum and maximum. If you enter `1` to `3`, each answer waits for a random delay between 1 and 3 seconds before live sending.
 - `HoloQuiz > Find answer` toggles the current auto answer function. Other quiz actions, such as browser search, live in this section.
-- `Trigger Phase > Screen phrase watcher` keeps reading two selected screen areas. Use `Set trigger area`, enter a `Trigger phrase`, then use `Set result area`. When the trigger area contains the phrase, the result area is OCR-read and printed in the GUI log. Turn on `Debug OCR log` beside it to see the selected regions, raw trigger OCR text, raw result OCR text, and the reason a result was not logged.
+- `Trigger Phase > Screen phrase watcher` keeps reading two selected screen areas. Use `Set trigger area`, enter a `Trigger phrase`, then use `Set result area`. When the trigger area contains the phrase, the result area is OCR-read and printed in the GUI log. Turn on `Debug OCR log` beside it to see the selected regions, raw trigger OCR text, raw result OCR text, and the reason a result was not logged. Turn on `Auto send result` to send the detected result to Minecraft chat after the same result OCR appears 5 times in a row. Trigger result sending ignores HoloQuiz dry-run and has a 15-second cooldown.
 
 The screen phrase watcher's trigger phrase and selected trigger/result areas are saved in `config.json`, so reopening the GUI restores them automatically.
 

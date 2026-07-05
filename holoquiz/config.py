@@ -41,6 +41,7 @@ class BotConfig:
     screen_phrase_trigger: str = ""
     screen_phrase_trigger_region: ScreenPhraseRegionConfig | None = None
     screen_phrase_result_region: ScreenPhraseRegionConfig | None = None
+    screen_phrase_auto_send_result: bool = False
 
 
 def discover_default_log_path() -> Path | None:
@@ -127,6 +128,7 @@ def save_screen_phrase_settings(
     trigger: str,
     trigger_region: ScreenPhraseRegionConfig | None,
     result_region: ScreenPhraseRegionConfig | None,
+    auto_send_result: bool,
 ) -> None:
     raw_config: dict[str, Any] = {}
     if path.exists():
@@ -137,6 +139,7 @@ def save_screen_phrase_settings(
     raw_config["screen_phrase_trigger"] = trigger
     raw_config["screen_phrase_trigger_region"] = _region_to_json(trigger_region)
     raw_config["screen_phrase_result_region"] = _region_to_json(result_region)
+    raw_config["screen_phrase_auto_send_result"] = auto_send_result
     path.write_text(
         json.dumps(raw_config, indent=2) + "\n",
         encoding="utf-8",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import queue
 import re
@@ -14,6 +14,7 @@ from typing import Any, Callable
 from urllib.parse import quote_plus
 import webbrowser
 
+from holoquiz.chat_sender import ChatSender
 from holoquiz.config import (
     BotConfig,
     ScreenPhraseRegionConfig,
@@ -28,7 +29,11 @@ from holoquiz.runtime import (
     RuntimeControls,
     SCREEN_PHRASE_WATCHER_FUNCTION,
 )
-from holoquiz.screen_phrase_watcher import ScreenPhraseWatcher, ScreenReadRegion
+from holoquiz.screen_phrase_watcher import (
+    ScreenPhraseWatcher,
+    ScreenReadRegion,
+    normalize_screen_text,
+)
 
 
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
@@ -36,6 +41,8 @@ BROWSER_SEARCH_STATUS_MAX_CHARS = 58
 BLANK_MARKER_PATTERN = re.compile(r"(?<!\w)(?:-{4,}|\?{4,}|_{4,})(?!\w)")
 TRIGGER_SOUND_PATH = Path(__file__).with_name("assets") / "gura-wakeup-1.wav"
 TRIGGER_SOUND_COOLDOWN_SECONDS = 30.0
+AUTO_SEND_RESULT_STABLE_READS = 5
+AUTO_SEND_RESULT_COOLDOWN_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -328,8 +335,11 @@ class ScreenPhraseWorker:
         log_queue: queue.Queue[str],
         poll_seconds: float = 1.0,
         debug_enabled_provider: Callable[[], bool] | None = None,
+        auto_send_result_provider: Callable[[], bool] | None = None,
+        result_sender: Callable[[str], None] | None = None,
         trigger_sound_player: Callable[[], None] | None = None,
         trigger_sound_cooldown_seconds: float = TRIGGER_SOUND_COOLDOWN_SECONDS,
+        auto_send_cooldown_seconds: float = AUTO_SEND_RESULT_COOLDOWN_SECONDS,
         monotonic_seconds: Callable[[], float] | None = None,
     ) -> None:
         self.controls = controls
@@ -337,10 +347,17 @@ class ScreenPhraseWorker:
         self.log_queue = log_queue
         self.poll_seconds = poll_seconds
         self._debug_enabled_provider = debug_enabled_provider or (lambda: False)
+        self._auto_send_result_provider = auto_send_result_provider or (lambda: False)
+        self._result_sender = result_sender
         self._trigger_sound_player = trigger_sound_player or play_trigger_sound
         self._trigger_sound_cooldown_seconds = trigger_sound_cooldown_seconds
+        self._auto_send_cooldown_seconds = auto_send_cooldown_seconds
         self._monotonic_seconds = monotonic_seconds or monotonic
         self._last_trigger_sound_at: float | None = None
+        self._stable_result_key = ""
+        self._stable_result_text = ""
+        self._stable_result_count = 0
+        self._last_auto_send_at: float | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_error = ""
@@ -398,6 +415,10 @@ class ScreenPhraseWorker:
                 f'Trigger "{event.trigger_phrase}" found; '
                 f"result area read: {event.result_text}"
             )
+            if self._auto_send_result_provider():
+                self._maybe_auto_send_result(event.result_text)
+        elif self._auto_send_result_provider():
+            self._maybe_auto_send_result(getattr(result, "result_text", ""))
 
     def _play_trigger_sound_if_ready(self) -> None:
         now = self._monotonic_seconds()
@@ -416,6 +437,61 @@ class ScreenPhraseWorker:
                 "[screen-phrase-watcher-error] "
                 f"Could not play trigger sound: {error}"
             )
+
+    def _send_result_to_chat(self, result_text: str) -> None:
+        try:
+            sender = self._result_sender or ChatSender(
+                self._trigger_chat_config(),
+                config_provider=self._trigger_chat_config,
+            ).send
+            writer = QueueLogWriter(self.log_queue)
+            with redirect_stdout(writer), redirect_stderr(writer):
+                sender(result_text)
+                writer.flush()
+        except Exception as error:
+            self.log_queue.put(
+                "[screen-phrase-watcher-error] "
+                f"Could not auto-send result: {error}"
+            )
+
+    def _maybe_auto_send_result(self, result_text: str) -> None:
+        clean_result_text = result_text.strip()
+        result_key = normalize_screen_text(clean_result_text)
+        if not result_key:
+            self._reset_auto_send_stability()
+            return
+
+        if result_key == self._stable_result_key:
+            self._stable_result_count += 1
+            self._stable_result_text = clean_result_text
+        else:
+            self._stable_result_key = result_key
+            self._stable_result_text = clean_result_text
+            self._stable_result_count = 1
+
+        if self._stable_result_count < AUTO_SEND_RESULT_STABLE_READS:
+            return
+        if self._auto_send_in_cooldown():
+            return
+
+        self._last_auto_send_at = self._monotonic_seconds()
+        self._send_result_to_chat(self._stable_result_text)
+
+    def _auto_send_in_cooldown(self) -> bool:
+        if self._last_auto_send_at is None:
+            return False
+        return (
+            self._monotonic_seconds() - self._last_auto_send_at
+            < self._auto_send_cooldown_seconds
+        )
+
+    def _reset_auto_send_stability(self) -> None:
+        self._stable_result_key = ""
+        self._stable_result_text = ""
+        self._stable_result_count = 0
+
+    def _trigger_chat_config(self) -> BotConfig:
+        return replace(self.controls.get_config(), dry_run=False)
 
     def _log_debug_result(self, result: object) -> None:
         trigger_region = getattr(result, "trigger_region", None)
@@ -557,6 +633,9 @@ class HoloQuizControlPanel:
         )
         self.screen_phrase_status_var = tk.StringVar(value="")
         self.screen_phrase_debug_var = tk.BooleanVar(value=False)
+        self.screen_phrase_auto_send_var = tk.BooleanVar(
+            value=config.screen_phrase_auto_send_result
+        )
         self.function_vars: dict[str, tk.BooleanVar] = {}
         self.screen_phrase_trigger_var.trace_add(
             "write",
@@ -568,6 +647,7 @@ class HoloQuizControlPanel:
             self.screen_phrase_watcher,
             self.log_queue,
             debug_enabled_provider=self.screen_phrase_debug_var.get,
+            auto_send_result_provider=self.screen_phrase_auto_send_var.get,
         )
 
         self._build_ui()
@@ -693,6 +773,12 @@ class HoloQuizControlPanel:
                 text="Debug OCR log",
                 variable=self.screen_phrase_debug_var,
             ).grid(row=0, column=1, sticky="w", padx=(12, 0))
+            ttk.Checkbutton(
+                row_frame,
+                text="Auto send result",
+                variable=self.screen_phrase_auto_send_var,
+                command=self._on_screen_phrase_auto_send_change,
+            ).grid(row=0, column=2, sticky="w", padx=(12, 0))
 
         screen_phrase_frame = ttk.Frame(trigger_phase_frame)
         screen_phrase_frame.grid(
@@ -809,6 +895,9 @@ class HoloQuizControlPanel:
         )
         self._save_screen_phrase_settings()
 
+    def _on_screen_phrase_auto_send_change(self) -> None:
+        self._save_screen_phrase_settings()
+
     def _load_screen_phrase_settings(self, config: BotConfig) -> None:
         self.screen_phrase_watcher.set_trigger_phrase(config.screen_phrase_trigger)
         if config.screen_phrase_trigger_region is not None:
@@ -834,6 +923,7 @@ class HoloQuizControlPanel:
             result_region=screen_region_to_config(
                 self.screen_phrase_watcher.get_result_region()
             ),
+            auto_send_result=self.screen_phrase_auto_send_var.get(),
         )
 
     def _select_screen_region(self, title: str) -> ScreenReadRegion | None:

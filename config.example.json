@@ -17,6 +17,7 @@
   "screen_phrase_trigger": "",
   "screen_phrase_trigger_region": null,
   "screen_phrase_result_region": null,
+  "screen_phrase_auto_send_result": false,
   "keyboard_open_chat_key": "t",
   "send_mode": "paste",
   "typing_interval_seconds": 0.01

@@ -39,6 +39,7 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "screen_phrase_trigger": "",
         "screen_phrase_trigger_region": None,
         "screen_phrase_result_region": None,
+        "screen_phrase_auto_send_result": False,
     }
 
 
@@ -158,6 +159,7 @@ def test_load_config_reads_screen_phrase_settings(tmp_path):
                     "width": 320,
                     "height": 50,
                 },
+                "screen_phrase_auto_send_result": True,
             }
         ),
         encoding="utf-8",
@@ -178,6 +180,7 @@ def test_load_config_reads_screen_phrase_settings(tmp_path):
         width=320,
         height=50,
     )
+    assert config.screen_phrase_auto_send_result is True
 
 
 def test_save_screen_phrase_settings_preserves_existing_config(tmp_path):
@@ -199,6 +202,7 @@ def test_save_screen_phrase_settings_preserves_existing_config(tmp_path):
         trigger="Afk, again?",
         trigger_region=ScreenPhraseRegionConfig(100, 200, 300, 40),
         result_region=ScreenPhraseRegionConfig(110, 260, 320, 50),
+        auto_send_result=True,
     )
 
     raw_config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -216,3 +220,4 @@ def test_save_screen_phrase_settings_preserves_existing_config(tmp_path):
         "width": 320,
         "height": 50,
     }
+    assert raw_config["screen_phrase_auto_send_result"] is True

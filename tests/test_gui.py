@@ -184,6 +184,131 @@ def test_screen_phrase_worker_plays_trigger_sound_once_per_cooldown():
     assert sound_calls == [100.0, 130.0]
 
 
+def test_screen_phrase_worker_auto_sends_result_after_five_stable_reads():
+    controls = RuntimeControls.from_config(BotConfig())
+    controls.set_function_enabled(SCREEN_PHRASE_WATCHER_FUNCTION, True)
+    reads = {
+        ScreenReadRegion(10, 20, 300, 40): "You are now AFK",
+        ScreenReadRegion(30, 80, 420, 60): "Good Morning!",
+    }
+    watcher = ScreenPhraseWatcher(text_reader=reads.__getitem__)
+    watcher.set_trigger_region(ScreenReadRegion(10, 20, 300, 40))
+    watcher.set_result_region(ScreenReadRegion(30, 80, 420, 60))
+    watcher.set_trigger_phrase("You are now AFK")
+    log_queue: queue.Queue[str] = queue.Queue()
+    sent_results = []
+    worker = ScreenPhraseWorker(
+        controls,
+        watcher,
+        log_queue,
+        auto_send_result_provider=lambda: True,
+        result_sender=sent_results.append,
+    )
+
+    for _ in range(4):
+        worker._check_screen()
+    assert sent_results == []
+
+    worker._check_screen()
+
+    assert sent_results == ["Good Morning!"]
+
+
+def test_screen_phrase_worker_does_not_auto_send_result_when_disabled():
+    controls = RuntimeControls.from_config(BotConfig())
+    controls.set_function_enabled(SCREEN_PHRASE_WATCHER_FUNCTION, True)
+    reads = {
+        ScreenReadRegion(10, 20, 300, 40): "You are now AFK",
+        ScreenReadRegion(30, 80, 420, 60): "Good Morning!",
+    }
+    watcher = ScreenPhraseWatcher(text_reader=reads.__getitem__)
+    watcher.set_trigger_region(ScreenReadRegion(10, 20, 300, 40))
+    watcher.set_result_region(ScreenReadRegion(30, 80, 420, 60))
+    watcher.set_trigger_phrase("You are now AFK")
+    log_queue: queue.Queue[str] = queue.Queue()
+    sent_results = []
+    worker = ScreenPhraseWorker(
+        controls,
+        watcher,
+        log_queue,
+        auto_send_result_provider=lambda: False,
+        result_sender=sent_results.append,
+    )
+
+    worker._check_screen()
+
+    assert sent_results == []
+
+
+def test_screen_phrase_worker_auto_send_waits_for_cooldown_after_stable_send():
+    controls = RuntimeControls.from_config(BotConfig())
+    controls.set_function_enabled(SCREEN_PHRASE_WATCHER_FUNCTION, True)
+    reads = {
+        ScreenReadRegion(10, 20, 300, 40): "You are now AFK",
+        ScreenReadRegion(30, 80, 420, 60): "I Love HoloCraft",
+    }
+    watcher = ScreenPhraseWatcher(text_reader=reads.__getitem__)
+    watcher.set_trigger_region(ScreenReadRegion(10, 20, 300, 40))
+    watcher.set_result_region(ScreenReadRegion(30, 80, 420, 60))
+    watcher.set_trigger_phrase("You are now AFK")
+    log_queue: queue.Queue[str] = queue.Queue()
+    sent_results = []
+    now = 100.0
+    worker = ScreenPhraseWorker(
+        controls,
+        watcher,
+        log_queue,
+        auto_send_result_provider=lambda: True,
+        result_sender=sent_results.append,
+        auto_send_cooldown_seconds=15.0,
+        monotonic_seconds=lambda: now,
+    )
+
+    for _ in range(5):
+        worker._check_screen()
+    now = 110.0
+    worker._check_screen()
+    now = 115.0
+    worker._check_screen()
+
+    assert sent_results == ["I Love HoloCraft", "I Love HoloCraft"]
+
+
+def test_screen_phrase_worker_auto_send_ignores_holoquiz_dry_run(monkeypatch):
+    controls = RuntimeControls.from_config(BotConfig(dry_run=True))
+    controls.set_function_enabled(SCREEN_PHRASE_WATCHER_FUNCTION, True)
+    reads = {
+        ScreenReadRegion(10, 20, 300, 40): "You are now AFK",
+        ScreenReadRegion(30, 80, 420, 60): "Good Morning!",
+    }
+    watcher = ScreenPhraseWatcher(text_reader=reads.__getitem__)
+    watcher.set_trigger_region(ScreenReadRegion(10, 20, 300, 40))
+    watcher.set_result_region(ScreenReadRegion(30, 80, 420, 60))
+    watcher.set_trigger_phrase("You are now AFK")
+    log_queue: queue.Queue[str] = queue.Queue()
+    sender_configs = []
+
+    class FakeChatSender:
+        def __init__(self, config, config_provider):
+            self._config_provider = config_provider
+
+        def send(self, result_text):
+            sender_configs.append((result_text, self._config_provider().dry_run))
+
+    monkeypatch.setattr("holoquiz.gui.ChatSender", FakeChatSender)
+    worker = ScreenPhraseWorker(
+        controls,
+        watcher,
+        log_queue,
+        auto_send_result_provider=lambda: True,
+    )
+
+    for _ in range(5):
+        worker._check_screen()
+
+    assert sender_configs == [("Good Morning!", False)]
+
+
 def test_ocr_screen_text_reader_returns_unique_text_from_multiple_passes():
     from PIL import Image
 
