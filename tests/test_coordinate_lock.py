@@ -3,6 +3,7 @@ import queue
 
 from holoquiz.config import BotConfig, CoordinateLockConfig
 from holoquiz.coordinate_lock import (
+    ContainerDataClient,
     CoordinateLockWorker,
     PlayerDataClient,
     PlayerPosition,
@@ -39,6 +40,14 @@ class FakePlayerClient:
         return self.position
 
 
+class FakeContainerClient:
+    def __init__(self, is_open=False):
+        self.open = is_open
+
+    def is_open(self):
+        return self.open
+
+
 class FakePyAutoGui:
     def __init__(self):
         self.events = []
@@ -70,6 +79,15 @@ def test_player_data_client_reads_local_api_shape():
     position = PlayerDataClient(opener=open_player).get_position()
 
     assert position == PlayerPosition(-1.25, 64.0, 8.5, -2.0)
+
+
+def test_container_data_client_reads_local_api_shape():
+    def open_container(url, timeout):
+        assert url == "http://127.0.0.1:8026/data/container"
+        assert timeout == 0.75
+        return FakeResponse({"api_version": 1, "open": True})
+
+    assert ContainerDataClient(opener=open_container).is_open() is True
 
 
 def test_nearest_enabled_lock_ignores_disabled_points():
@@ -154,6 +172,7 @@ def test_worker_looks_at_lock_and_moves_forward_when_enabled():
         controls,
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(0, 64, 0, heading=0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
         mouse_mover=lambda x, y: keys.events.append(("move", x, y)),
@@ -185,6 +204,7 @@ def test_worker_ignores_holoquiz_dry_run_and_moves_toward_nearby_lock():
         controls,
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(0, 64, 0, heading=0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
         key_hold_seconds=0,
@@ -220,6 +240,7 @@ def test_worker_releases_pressed_keys_when_an_input_fails():
         controls,
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
         key_hold_seconds=0,
@@ -245,6 +266,7 @@ def test_worker_stops_when_nearest_lock_is_over_fifty_blocks_away():
         controls,
         logs,
         player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
         key_hold_seconds=0,
@@ -271,6 +293,7 @@ def test_worker_waits_until_minecraft_is_foreground():
         controls,
         logs,
         player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: False,
     )
@@ -296,6 +319,7 @@ def test_worker_pauses_movement_while_chat_is_typing_then_resumes():
         controls,
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
         key_hold_seconds=0,
@@ -307,6 +331,35 @@ def test_worker_pauses_movement_while_chat_is_typing_then_resumes():
 
     assert keys.events == []
 
+    worker.check_once()
+
+    assert keys.events == [("down", "w"), ("up", "w")]
+
+
+def test_worker_pauses_while_inventory_is_open_then_resumes():
+    lock = CoordinateLockConfig("home", 0, 64, 10)
+    controls = RuntimeControls.from_config(
+        BotConfig(coordinate_lock_enabled=True, coordinate_locks=(lock,))
+    )
+    keys = FakePyAutoGui()
+    container = FakeContainerClient(is_open=True)
+    logs = queue.Queue()
+    worker = CoordinateLockWorker(
+        controls,
+        logs,
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=container,
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+        key_hold_seconds=0,
+    )
+
+    worker.check_once()
+
+    assert keys.events == []
+    assert "inventory or container is open" in logs.get_nowait()
+
+    container.open = False
     worker.check_once()
 
     assert keys.events == [("down", "w"), ("up", "w")]
@@ -326,6 +379,7 @@ def test_worker_auto_hits_within_the_enabled_coordinate_range():
         controls,
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(49, 64, 0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
     )
@@ -350,6 +404,7 @@ def test_worker_does_not_auto_hit_outside_the_coordinate_range():
         controls,
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(51, 64, 0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
     )
@@ -372,6 +427,7 @@ def test_worker_does_not_auto_hit_when_coordinate_lock_is_disabled():
         controls,
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
     )
@@ -395,6 +451,7 @@ def test_auto_hit_click_loop_is_independent_from_location_polling():
         controls,
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
     )

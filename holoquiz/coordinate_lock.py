@@ -51,6 +51,29 @@ class PlayerDataClient:
         )
 
 
+class ContainerDataClient:
+    def __init__(
+        self,
+        url: str = "http://127.0.0.1:8026/data/container",
+        *,
+        timeout_seconds: float = 0.75,
+        opener: Callable[..., Any] = urlopen,
+    ) -> None:
+        self.url = url
+        self.timeout_seconds = timeout_seconds
+        self._opener = opener
+
+    def is_open(self) -> bool:
+        with self._opener(self.url, timeout=self.timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Container endpoint returned a non-object response.")
+        open_value = payload.get("open")
+        if not isinstance(open_value, bool):
+            raise ValueError("Container endpoint is missing boolean open state.")
+        return open_value
+
+
 def _coordinate(payload: dict[str, Any], primary: str, fallback: str) -> float:
     value = payload.get(primary, payload.get(fallback))
     if value is None:
@@ -165,6 +188,7 @@ class CoordinateLockWorker:
         log_queue: queue.Queue[str],
         *,
         player_client: PlayerDataClient | None = None,
+        container_client: ContainerDataClient | None = None,
         pyautogui_module: Any | None = None,
         foreground_provider: Callable[[], bool] = minecraft_is_foreground,
         mouse_mover: Callable[[int, int], None] | None = None,
@@ -175,6 +199,7 @@ class CoordinateLockWorker:
         self.controls = controls
         self.log_queue = log_queue
         self.player_client = player_client
+        self.container_client = container_client or ContainerDataClient()
         self._pyautogui = pyautogui_module
         self._foreground_provider = foreground_provider
         self._mouse_mover = mouse_mover
@@ -251,6 +276,14 @@ class CoordinateLockWorker:
             self._auto_hit_in_range.clear()
             return
         try:
+            if self.container_client.is_open():
+                self._auto_hit_in_range.clear()
+                self._last_position = None
+                self._stalled_checks = 0
+                self._status(
+                    "[coordinate-lock] Paused while an inventory or container is open."
+                )
+                return
             position = self._client(config).get_position()
             self._update_camera_calibration(position)
             nearest = nearest_enabled_lock(position, config.coordinate_locks)
