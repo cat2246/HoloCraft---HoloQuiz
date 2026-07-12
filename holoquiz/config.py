@@ -65,6 +65,7 @@ class BotConfig:
     chat_trigger_dry_run: bool = True
     chat_triggers: tuple[ChatTriggerConfig, ...] = ()
     coordinate_lock_enabled: bool = False
+    coordinate_lock_auto_hit_enabled: bool = False
     coordinate_locks: tuple[CoordinateLockConfig, ...] = ()
     coordinate_lock_max_distance: float = 50.0
     coordinate_lock_tolerance: float = 0.75
@@ -206,6 +207,7 @@ def save_coordinate_lock_settings(
     locks: list[CoordinateLockConfig] | tuple[CoordinateLockConfig, ...],
     *,
     enabled: bool,
+    auto_hit_enabled: bool = False,
 ) -> None:
     raw_config: dict[str, Any] = {}
     if path.exists():
@@ -214,6 +216,7 @@ def save_coordinate_lock_settings(
             raise ValueError("Config root must be a JSON object.")
 
     raw_config["coordinate_lock_enabled"] = enabled
+    raw_config["coordinate_lock_auto_hit_enabled"] = auto_hit_enabled
     raw_config["coordinate_locks"] = [
         _coordinate_lock_to_json(lock) for lock in locks
     ]

@@ -7,7 +7,8 @@ dependencies = [
   "pillow>=10.0",
   "pyautogui>=0.9.54",
   "pytesseract>=0.3.13",
-  "pyperclip>=1.8.2"
+  "pyperclip>=1.8.2",
+  "pynput>=1.7.7"
 ]
 
 [project.optional-dependencies]

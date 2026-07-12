@@ -75,9 +75,11 @@ def test_runtime_controls_track_coordinate_lock_settings():
     lock = CoordinateLockConfig("home", 1, 2, 3)
 
     controls.set_coordinate_lock_enabled(True)
+    controls.set_coordinate_lock_auto_hit_enabled(True)
     controls.set_coordinate_locks([lock])
 
     assert controls.get_config().coordinate_lock_enabled is True
+    assert controls.get_config().coordinate_lock_auto_hit_enabled is True
     assert controls.get_coordinate_locks() == (lock,)
     assert controls.snapshot().coordinate_locks == (lock,)
 

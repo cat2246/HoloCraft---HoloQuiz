@@ -47,6 +47,10 @@ class FakePyAutoGui:
     def keyUp(self, key):
         self.events.append(("up", key))
 
+    def click(self, button, _pause=True):
+        assert _pause is False
+        self.events.append(("click", button))
+
 
 def test_player_data_client_reads_local_api_shape():
     def open_player(url, timeout):
@@ -225,3 +229,97 @@ def test_worker_pauses_movement_while_chat_is_typing_then_resumes():
     worker.check_once()
 
     assert keys.events == [("down", "w"), ("up", "w")]
+
+
+def test_worker_auto_hits_within_the_enabled_coordinate_range():
+    lock = CoordinateLockConfig("home", 0, 64, 0)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(lock,),
+        )
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(49, 64, 0)),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+
+    worker.check_once()
+    worker._auto_hit_once()
+
+    assert keys.events == [("down", "d"), ("up", "d"), ("click", "left")]
+
+
+def test_worker_does_not_auto_hit_outside_the_coordinate_range():
+    lock = CoordinateLockConfig("home", 0, 64, 0)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(lock,),
+        )
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(51, 64, 0)),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+
+    worker.check_once()
+    worker._auto_hit_once()
+
+    assert keys.events == []
+
+
+def test_worker_does_not_auto_hit_when_coordinate_lock_is_disabled():
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(CoordinateLockConfig("home", 0, 64, 0),),
+        )
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+
+    worker.check_once()
+    worker._auto_hit_once()
+
+    assert keys.events == []
+
+
+def test_auto_hit_click_loop_is_independent_from_location_polling():
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(CoordinateLockConfig("home", 0, 64, 0),),
+        )
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+
+    worker.check_once()
+    worker._auto_hit_once()
+    worker._auto_hit_once()
+
+    assert keys.events == [("click", "left"), ("click", "left")]

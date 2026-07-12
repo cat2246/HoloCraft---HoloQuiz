@@ -24,6 +24,7 @@
   "chat_trigger_dry_run": true,
   "chat_triggers": [],
   "coordinate_lock_enabled": false,
+  "coordinate_lock_auto_hit_enabled": false,
   "coordinate_locks": [],
   "coordinate_lock_max_distance": 50.0,
   "coordinate_lock_tolerance": 0.75,

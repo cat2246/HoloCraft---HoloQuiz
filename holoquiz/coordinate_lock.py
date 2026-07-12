@@ -5,6 +5,7 @@ import ctypes
 import json
 import math
 import queue
+import random
 import threading
 from typing import Any, Callable
 from urllib.request import urlopen
@@ -134,7 +135,9 @@ class CoordinateLockWorker:
         self.key_hold_seconds = key_hold_seconds
         self._input_coordinator = input_coordinator or keyboard_input_coordinator
         self._stop_event = threading.Event()
+        self._auto_hit_in_range = threading.Event()
         self._thread: threading.Thread | None = None
+        self._auto_hit_thread: threading.Thread | None = None
         self._last_status = ""
         self._last_position: PlayerPosition | None = None
         self._stalled_checks = 0
@@ -143,8 +146,14 @@ class CoordinateLockWorker:
         if self.is_running():
             return
         self._stop_event.clear()
+        self._auto_hit_in_range.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
+        self._auto_hit_thread = threading.Thread(
+            target=self._run_auto_hit,
+            daemon=True,
+        )
         self._thread.start()
+        self._auto_hit_thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -159,7 +168,20 @@ class CoordinateLockWorker:
             else:
                 self._last_position = None
                 self._stalled_checks = 0
+                self._auto_hit_in_range.clear()
             self._stop_event.wait(self.poll_seconds)
+
+    def _run_auto_hit(self) -> None:
+        while not self._stop_event.is_set():
+            if not self._auto_hit_in_range.wait(timeout=0.05):
+                continue
+            try:
+                clicked = self._auto_hit_once()
+            except Exception as error:
+                self._status(f"[coordinate-lock-auto-hit-error] {error}")
+                clicked = False
+            delay = random.uniform(0.3, 0.8) if clicked else 0.01
+            self._stop_event.wait(delay)
 
     def _should_check(self) -> bool:
         config = self.controls.get_config()
@@ -171,18 +193,31 @@ class CoordinateLockWorker:
 
     def check_once(self) -> None:
         config = self.controls.get_config()
+        if not (
+            config.program_enabled
+            and config.coordinate_lock_enabled
+            and any(lock.enabled for lock in config.coordinate_locks)
+        ):
+            self._auto_hit_in_range.clear()
+            return
         try:
             position = self._client(config).get_position()
             nearest = nearest_enabled_lock(position, config.coordinate_locks)
             if nearest is None:
+                self._auto_hit_in_range.clear()
                 return
             lock, distance = nearest
             if distance > config.coordinate_lock_max_distance:
+                self._auto_hit_in_range.clear()
                 self._status(
                     "[coordinate-lock] Player is "
                     f"{distance:.1f} blocks from the nearest lock; movement stopped."
                 )
                 return
+            if config.coordinate_lock_auto_hit_enabled:
+                self._auto_hit_in_range.set()
+            else:
+                self._auto_hit_in_range.clear()
             if distance <= config.coordinate_lock_tolerance:
                 self._status(
                     "[coordinate-lock] Position locked at "
@@ -202,6 +237,7 @@ class CoordinateLockWorker:
             self._last_position = position
             self._last_status = ""
         except Exception as error:
+            self._auto_hit_in_range.clear()
             self._status(f"[coordinate-lock-error] {error}")
 
     def _client(self, config: BotConfig) -> PlayerDataClient:
@@ -246,6 +282,25 @@ class CoordinateLockWorker:
             finally:
                 for pressed_key in reversed(pressed_keys):
                     pyautogui.keyUp(pressed_key)
+
+    def _auto_hit_once(self) -> bool:
+        config = self.controls.get_config()
+        if not (
+            self._auto_hit_in_range.is_set()
+            and config.program_enabled
+            and config.coordinate_lock_enabled
+            and config.coordinate_lock_auto_hit_enabled
+            and any(lock.enabled for lock in config.coordinate_locks)
+        ):
+            return False
+        if not self._foreground_provider():
+            return False
+        with self._input_coordinator.movement_session() as input_allowed:
+            if not input_allowed:
+                return False
+            pyautogui = self._pyautogui or self._load_pyautogui()
+            pyautogui.click(button="left", _pause=False)
+            return True
 
     def _load_pyautogui(self) -> Any:
         import pyautogui

@@ -29,6 +29,7 @@ from holoquiz.config import (
 from holoquiz.coordinate_lock import CoordinateLockWorker, PlayerDataClient
 from holoquiz.log_tailer import LogTailer
 from holoquiz.minecraft_text_ocr import read_minecraft_text
+from holoquiz.mouse_hotkey import Mouse4HotkeyListener
 from holoquiz.runner import build_bot, drain_answer_reveals
 from holoquiz.runtime import (
     FunctionDefinition,
@@ -637,6 +638,7 @@ class HoloQuizControlPanel:
                 config_path,
                 self.controls.get_coordinate_locks(),
                 enabled=config.coordinate_lock_enabled,
+                auto_hit_enabled=config.coordinate_lock_auto_hit_enabled,
             )
         self.controller = ControlPanelController(self.controls)
         self.log_queue: queue.Queue[str] = queue.Queue()
@@ -677,6 +679,9 @@ class HoloQuizControlPanel:
         self.coordinate_lock_enabled_var = tk.BooleanVar(
             value=config.coordinate_lock_enabled
         )
+        self.coordinate_lock_auto_hit_var = tk.BooleanVar(
+            value=config.coordinate_lock_auto_hit_enabled
+        )
         self.coordinate_lock_name_var = tk.StringVar(value="")
         self.coordinate_lock_x_var = tk.StringVar(value="")
         self.coordinate_lock_y_var = tk.StringVar(value="")
@@ -702,12 +707,16 @@ class HoloQuizControlPanel:
             self.log_queue,
             player_client=PlayerDataClient(config.player_data_url),
         )
+        self.mouse4_hotkey_listener = Mouse4HotkeyListener(
+            self._queue_mouse4_coordinate_lock_toggle
+        )
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.worker.start()
         self.screen_phrase_worker.start()
         self.coordinate_lock_worker.start()
+        self.mouse4_hotkey_listener.start()
         self._refresh_status()
         self._drain_logs()
 
@@ -954,30 +963,36 @@ class HoloQuizControlPanel:
 
         coordinate_lock_form = ttk.Frame(coordinate_lock_frame)
         coordinate_lock_form.grid(row=0, column=0, sticky="ew")
-        coordinate_lock_form.columnconfigure(11, weight=1)
+        coordinate_lock_form.columnconfigure(13, weight=1)
         ttk.Checkbutton(
             coordinate_lock_form,
             text="Enable coordinate lock",
             variable=self.coordinate_lock_enabled_var,
             command=self._on_coordinate_lock_master_toggle,
         ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Checkbutton(
+            coordinate_lock_form,
+            text="Auto Hit",
+            variable=self.coordinate_lock_auto_hit_var,
+            command=self._on_coordinate_lock_auto_hit_toggle,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 12))
         ttk.Label(coordinate_lock_form, text="Name").grid(
             row=0,
-            column=1,
+            column=2,
             sticky="w",
         )
         ttk.Entry(
             coordinate_lock_form,
             textvariable=self.coordinate_lock_name_var,
             width=16,
-        ).grid(row=0, column=2, sticky="w", padx=(4, 8))
+        ).grid(row=0, column=3, sticky="w", padx=(4, 8))
         for column, (label, variable) in enumerate(
             (
                 ("X", self.coordinate_lock_x_var),
                 ("Y", self.coordinate_lock_y_var),
                 ("Z", self.coordinate_lock_z_var),
             ),
-            start=2,
+            start=3,
         ):
             entry_column = column * 2
             ttk.Label(coordinate_lock_form, text=label).grid(
@@ -994,16 +1009,16 @@ class HoloQuizControlPanel:
             coordinate_lock_form,
             text="Add coordinate",
             command=self._on_add_coordinate_lock,
-        ).grid(row=0, column=9, sticky="w", padx=(2, 6))
+        ).grid(row=0, column=11, sticky="w", padx=(2, 6))
         ttk.Button(
             coordinate_lock_form,
             text="Lock Here",
             command=self._on_lock_here,
-        ).grid(row=0, column=10, sticky="w")
+        ).grid(row=0, column=12, sticky="w")
         ttk.Label(
             coordinate_lock_form,
             textvariable=self.coordinate_lock_status_var,
-        ).grid(row=0, column=11, sticky="ew", padx=(8, 0))
+        ).grid(row=0, column=13, sticky="ew", padx=(8, 0))
 
         self.coordinate_lock_rows_frame = ttk.Frame(coordinate_lock_frame)
         self.coordinate_lock_rows_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
@@ -1301,6 +1316,22 @@ class HoloQuizControlPanel:
         self._save_coordinate_lock_settings()
         self.coordinate_lock_status_var.set("Enabled." if enabled else "Disabled.")
 
+    def _queue_mouse4_coordinate_lock_toggle(self) -> None:
+        self.root.after(0, self._toggle_coordinate_lock_from_mouse4)
+
+    def _toggle_coordinate_lock_from_mouse4(self) -> None:
+        enabled = not self.coordinate_lock_enabled_var.get()
+        self.coordinate_lock_enabled_var.set(enabled)
+        self._on_coordinate_lock_master_toggle()
+        state = "enabled" if enabled else "disabled"
+        self.coordinate_lock_status_var.set(f"Coordinate lock {state} by Mouse 4.")
+
+    def _on_coordinate_lock_auto_hit_toggle(self) -> None:
+        self.controls.set_coordinate_lock_auto_hit_enabled(
+            self.coordinate_lock_auto_hit_var.get()
+        )
+        self._save_coordinate_lock_settings()
+
     def _on_add_coordinate_lock(self) -> None:
         result = self._build_coordinate_lock_from_form()
         if not result.ok or result.value is None:
@@ -1410,6 +1441,7 @@ class HoloQuizControlPanel:
             self.config_path,
             self.controls.get_coordinate_locks(),
             enabled=self.coordinate_lock_enabled_var.get(),
+            auto_hit_enabled=self.coordinate_lock_auto_hit_var.get(),
         )
 
     def _chat_trigger_by_id(self, trigger_id: str | None) -> ChatTriggerConfig | None:
@@ -1483,6 +1515,7 @@ class HoloQuizControlPanel:
         self.log_text.configure(state="disabled")
 
     def close(self) -> None:
+        self.mouse4_hotkey_listener.stop()
         self.worker.stop()
         self.screen_phrase_worker.stop()
         self.coordinate_lock_worker.stop()
