@@ -438,6 +438,60 @@ def test_worker_does_not_auto_hit_when_coordinate_lock_is_disabled():
     assert keys.events == []
 
 
+def test_worker_rechecks_inventory_immediately_before_auto_hit():
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(CoordinateLockConfig("home", 0, 64, 0),),
+        )
+    )
+    keys = FakePyAutoGui()
+    container = FakeContainerClient()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=container,
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+
+    worker.check_once()
+    container.open = True
+
+    assert worker._auto_hit_once() is False
+    assert keys.events == []
+
+
+def test_worker_skips_auto_hit_when_inventory_check_fails():
+    class FailingContainerClient:
+        def is_open(self):
+            raise OSError("container API unavailable")
+
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(CoordinateLockConfig("home", 0, 64, 0),),
+        )
+    )
+    keys = FakePyAutoGui()
+    logs = queue.Queue()
+    worker = CoordinateLockWorker(
+        controls,
+        logs,
+        container_client=FailingContainerClient(),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+    worker._auto_hit_in_range.set()
+
+    assert worker._auto_hit_once() is False
+    assert keys.events == []
+    assert "container API unavailable" in logs.get_nowait()
+
+
 def test_auto_hit_click_loop_is_independent_from_location_polling():
     controls = RuntimeControls.from_config(
         BotConfig(

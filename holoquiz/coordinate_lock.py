@@ -441,6 +441,16 @@ class CoordinateLockWorker:
         with self._input_coordinator.movement_session() as input_allowed:
             if not input_allowed:
                 return False
+            # Re-check at the click boundary. The location polling thread may have
+            # last observed a closed container just before the inventory opened.
+            try:
+                if self.container_client.is_open():
+                    self._auto_hit_in_range.clear()
+                    return False
+            except Exception as error:
+                # Clicking is unsafe when the current container state is unknown.
+                self._status(f"[coordinate-lock-auto-hit-container-error] {error}")
+                return False
             pyautogui = self._pyautogui or self._load_pyautogui()
             pyautogui.click(button="left", _pause=False)
             return True
