@@ -1,5 +1,6 @@
 import queue
 
+import holoquiz.gui as gui
 from holoquiz.config import BotConfig
 from holoquiz.gui import (
     BROWSER_SEARCH_STATUS_MAX_CHARS,
@@ -14,6 +15,10 @@ from holoquiz.runtime import (
     RuntimeControls,
 )
 from holoquiz.screen_phrase_watcher import ScreenPhraseWatcher, ScreenReadRegion
+
+
+def test_gui_app_title_is_holocraft_tools():
+    assert getattr(gui, "APP_TITLE", None) == "HoloCraft Tools"
 
 
 def test_build_browser_search_query_removes_holoquiz_prompt_noise():

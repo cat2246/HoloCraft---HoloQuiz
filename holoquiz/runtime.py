@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from threading import RLock
 
-from holoquiz.config import BotConfig
+from holoquiz.config import BotConfig, ChatTriggerConfig, CoordinateLockConfig
 
 
 FIND_ANSWER_FUNCTION = "find_answer"
@@ -39,6 +39,10 @@ class RuntimeSnapshot:
     send_delay_max_seconds: float
     latest_question: str | None
     functions: dict[str, bool]
+    chat_triggers: tuple[ChatTriggerConfig, ...]
+    chat_trigger_dry_run: bool
+    coordinate_lock_enabled: bool
+    coordinate_locks: tuple[CoordinateLockConfig, ...]
 
 
 class RuntimeControls:
@@ -59,6 +63,12 @@ class RuntimeControls:
         self._send_delay_min_seconds = base_config.send_delay_min_seconds
         self._send_delay_max_seconds = base_config.send_delay_max_seconds
         self._latest_question: str | None = None
+        self._chat_triggers = tuple(base_config.chat_triggers)
+        self._chat_trigger_dry_run = base_config.chat_trigger_dry_run
+        self._coordinate_lock_enabled = base_config.coordinate_lock_enabled
+        self._coordinate_locks = _only_first_coordinate_lock_enabled(
+            base_config.coordinate_locks
+        )
         self._functions = {
             function.key: function.enabled_by_default
             for function in self.registry.all()
@@ -84,6 +94,10 @@ class RuntimeControls:
                 send_delay_seconds=self._send_delay_seconds,
                 send_delay_min_seconds=self._send_delay_min_seconds,
                 send_delay_max_seconds=self._send_delay_max_seconds,
+                chat_triggers=tuple(self._chat_triggers),
+                chat_trigger_dry_run=self._chat_trigger_dry_run,
+                coordinate_lock_enabled=self._coordinate_lock_enabled,
+                coordinate_locks=tuple(self._coordinate_locks),
             )
 
     def snapshot(self) -> RuntimeSnapshot:
@@ -97,6 +111,10 @@ class RuntimeControls:
                 send_delay_max_seconds=self._send_delay_max_seconds,
                 latest_question=self._latest_question,
                 functions=dict(self._functions),
+                chat_triggers=tuple(self._chat_triggers),
+                chat_trigger_dry_run=self._chat_trigger_dry_run,
+                coordinate_lock_enabled=self._coordinate_lock_enabled,
+                coordinate_locks=tuple(self._coordinate_locks),
             )
 
     def is_program_enabled(self) -> bool:
@@ -158,6 +176,40 @@ class RuntimeControls:
             if key == FIND_ANSWER_FUNCTION:
                 self._auto_answer_enabled = enabled
 
+    def get_chat_triggers(self) -> tuple[ChatTriggerConfig, ...]:
+        with self._lock:
+            return tuple(self._chat_triggers)
+
+    def set_chat_triggers(
+        self,
+        triggers: list[ChatTriggerConfig] | tuple[ChatTriggerConfig, ...],
+    ) -> None:
+        with self._lock:
+            self._chat_triggers = tuple(triggers)
+
+    def set_chat_trigger_dry_run(self, enabled: bool) -> None:
+        with self._lock:
+            self._chat_trigger_dry_run = enabled
+
+    def is_coordinate_lock_enabled(self) -> bool:
+        with self._lock:
+            return self._coordinate_lock_enabled
+
+    def set_coordinate_lock_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._coordinate_lock_enabled = enabled
+
+    def get_coordinate_locks(self) -> tuple[CoordinateLockConfig, ...]:
+        with self._lock:
+            return tuple(self._coordinate_locks)
+
+    def set_coordinate_locks(
+        self,
+        locks: list[CoordinateLockConfig] | tuple[CoordinateLockConfig, ...],
+    ) -> None:
+        with self._lock:
+            self._coordinate_locks = _only_first_coordinate_lock_enabled(locks)
+
     def _require_function(self, key: str) -> None:
         if not self.registry.has(key):
             raise KeyError(f"Unknown function: {key}")
@@ -178,3 +230,18 @@ def default_function_registry() -> FunctionRegistry:
             )
         ]
     )
+
+
+def _only_first_coordinate_lock_enabled(
+    locks: list[CoordinateLockConfig] | tuple[CoordinateLockConfig, ...],
+) -> tuple[CoordinateLockConfig, ...]:
+    found_enabled = False
+    normalized: list[CoordinateLockConfig] = []
+    for lock in locks:
+        if lock.enabled and found_enabled:
+            normalized.append(replace(lock, enabled=False))
+            continue
+        normalized.append(lock)
+        if lock.enabled:
+            found_enabled = True
+    return tuple(normalized)

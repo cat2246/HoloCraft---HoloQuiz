@@ -1,4 +1,4 @@
-from holoquiz.config import BotConfig
+from holoquiz.config import BotConfig, CoordinateLockConfig
 from holoquiz.runtime import (
     FIND_ANSWER_FUNCTION,
     SCREEN_PHRASE_WATCHER_FUNCTION,
@@ -57,6 +57,43 @@ def test_runtime_controls_merge_live_delay_range_into_config():
     assert config.send_delay_max_seconds == 3.0
     assert controls.snapshot().send_delay_min_seconds == 1.0
     assert controls.snapshot().send_delay_max_seconds == 3.0
+
+
+def test_runtime_controls_track_chat_trigger_dry_run_separately():
+    controls = RuntimeControls.from_config(BotConfig(dry_run=True))
+
+    controls.set_chat_trigger_dry_run(False)
+
+    config = controls.get_config()
+    assert config.dry_run is True
+    assert config.chat_trigger_dry_run is False
+    assert controls.snapshot().chat_trigger_dry_run is False
+
+
+def test_runtime_controls_track_coordinate_lock_settings():
+    controls = RuntimeControls.from_config(BotConfig())
+    lock = CoordinateLockConfig("home", 1, 2, 3)
+
+    controls.set_coordinate_lock_enabled(True)
+    controls.set_coordinate_locks([lock])
+
+    assert controls.get_config().coordinate_lock_enabled is True
+    assert controls.get_coordinate_locks() == (lock,)
+    assert controls.snapshot().coordinate_locks == (lock,)
+
+
+def test_runtime_controls_allow_only_one_enabled_coordinate_lock():
+    first = CoordinateLockConfig("first", 1, 2, 3)
+    second = CoordinateLockConfig("second", 4, 5, 6)
+
+    controls = RuntimeControls.from_config(
+        BotConfig(coordinate_locks=(first, second))
+    )
+
+    assert controls.get_coordinate_locks() == (
+        first,
+        CoordinateLockConfig("second", 4, 5, 6, enabled=False),
+    )
 
 
 def test_runtime_controls_reject_invalid_delay_range():

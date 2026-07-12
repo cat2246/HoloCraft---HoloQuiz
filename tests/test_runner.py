@@ -3,7 +3,7 @@ from collections import deque
 
 import pytest
 
-from holoquiz.config import BotConfig
+from holoquiz.config import BotConfig, ChatTriggerConfig
 from holoquiz.memory import QuizMemory
 from holoquiz.runtime import FIND_ANSWER_FUNCTION, RuntimeControls
 from holoquiz.runner import HoloQuizBot, build_bot, drain_answer_reveals
@@ -22,9 +22,13 @@ class FakeAnswerService:
 class FakeSender:
     def __init__(self):
         self.sent = []
+        self.macros = []
 
     def send(self, answer):
         self.sent.append(answer)
+
+    def send_macro(self, macro, typing_interval_seconds=None):
+        self.macros.append((macro, typing_interval_seconds))
 
 
 class DebugAnswerService:
@@ -320,3 +324,102 @@ def test_build_bot_rejects_configured_missing_log_path(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="latest.log"):
         build_bot(config_path=config_path, workspace=tmp_path)
+
+
+def test_bot_runs_chat_trigger_macro_for_matching_log_line(tmp_path, capsys):
+    sender = FakeSender()
+    config = BotConfig(
+        chat_triggers=(
+            ChatTriggerConfig(
+                id="morning",
+                trigger_phrase="Good Morning!",
+                macro="tGood Morning{{Enter}}",
+                cooldown_seconds=30.0,
+                enabled=True,
+            ),
+        )
+    )
+    bot = HoloQuizBot(
+        config=config,
+        memory=QuizMemory.load(tmp_path / "quiz_memory.json"),
+        answer_service=FakeAnswerService({}),
+        sender=sender,
+        clock=lambda: 100.0,
+    )
+
+    bot.handle_line(
+        "[17:40:00] [Render thread/INFO]: [System] [CHAT] "
+        "[Discord | Divine] !?Cat2246?! \u00bb Good Morning!"
+    )
+
+    assert sender.macros == [("tGood Morning{{Enter}}", None)]
+    assert "[chat-trigger] Good Morning! -> tGood Morning{{Enter}}" in capsys.readouterr().out
+
+
+def test_bot_skips_chat_trigger_when_disabled_or_in_cooldown(tmp_path):
+    sender = FakeSender()
+    now = 100.0
+    config = BotConfig(
+        chat_triggers=(
+            ChatTriggerConfig(
+                id="morning",
+                trigger_phrase="Good Morning!",
+                macro="tGood Morning{{Enter}}",
+                cooldown_seconds=30.0,
+                enabled=True,
+            ),
+            ChatTriggerConfig(
+                id="night",
+                trigger_phrase="Good Night!",
+                macro="tGood Night{{Enter}}",
+                cooldown_seconds=0.0,
+                enabled=False,
+            ),
+        )
+    )
+    bot = HoloQuizBot(
+        config=config,
+        memory=QuizMemory.load(tmp_path / "quiz_memory.json"),
+        answer_service=FakeAnswerService({}),
+        sender=sender,
+        clock=lambda: now,
+    )
+
+    bot.handle_line("[System] [CHAT] Good Morning!")
+    now = 110.0
+    bot.handle_line("[System] [CHAT] Good Morning!")
+    bot.handle_line("[System] [CHAT] Good Night!")
+    now = 130.0
+    bot.handle_line("[System] [CHAT] Good Morning!")
+
+    assert sender.macros == [
+        ("tGood Morning{{Enter}}", None),
+        ("tGood Morning{{Enter}}", None),
+    ]
+
+
+def test_bot_passes_chat_trigger_typing_interval_to_macro_sender(tmp_path):
+    sender = FakeSender()
+    config = BotConfig(
+        chat_triggers=(
+            ChatTriggerConfig(
+                id="morning",
+                trigger_phrase="Good Morning!",
+                macro="tGood Morning{{Enter}}",
+                cooldown_seconds=30.0,
+                typing_interval_seconds=0.1,
+                enabled=True,
+            ),
+        )
+    )
+    bot = HoloQuizBot(
+        config=config,
+        memory=QuizMemory.load(tmp_path / "quiz_memory.json"),
+        answer_service=FakeAnswerService({}),
+        sender=sender,
+        clock=lambda: 100.0,
+    )
+
+    bot.handle_line("[System] [CHAT] Good Morning!")
+
+    assert sender.macros == [("tGood Morning{{Enter}}", 0.1)]

@@ -20,5 +20,12 @@
   "screen_phrase_auto_send_result": false,
   "keyboard_open_chat_key": "t",
   "send_mode": "paste",
-  "typing_interval_seconds": 0.01
+  "typing_interval_seconds": 0.01,
+  "chat_trigger_dry_run": true,
+  "chat_triggers": [],
+  "coordinate_lock_enabled": false,
+  "coordinate_locks": [],
+  "coordinate_lock_max_distance": 50.0,
+  "coordinate_lock_tolerance": 0.75,
+  "player_data_url": "http://localhost:8025/data/player"
 }

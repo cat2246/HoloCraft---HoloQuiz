@@ -12,15 +12,21 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Any, Callable
 from urllib.parse import quote_plus
+from uuid import uuid4
 import webbrowser
 
 from holoquiz.chat_sender import ChatSender
 from holoquiz.config import (
     BotConfig,
+    ChatTriggerConfig,
+    CoordinateLockConfig,
     ScreenPhraseRegionConfig,
     load_config,
+    save_chat_triggers_settings,
+    save_coordinate_lock_settings,
     save_screen_phrase_settings,
 )
+from holoquiz.coordinate_lock import CoordinateLockWorker, PlayerDataClient
 from holoquiz.log_tailer import LogTailer
 from holoquiz.minecraft_text_ocr import read_minecraft_text
 from holoquiz.runner import build_bot, drain_answer_reveals
@@ -37,6 +43,7 @@ from holoquiz.screen_phrase_watcher import (
 
 
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
+APP_TITLE = "HoloCraft Tools"
 BROWSER_SEARCH_STATUS_MAX_CHARS = 58
 BLANK_MARKER_PATTERN = re.compile(r"(?<!\w)(?:-{4,}|\?{4,}|_{4,})(?!\w)")
 TRIGGER_SOUND_PATH = Path(__file__).with_name("assets") / "gura-wakeup-1.wav"
@@ -49,6 +56,20 @@ AUTO_SEND_RESULT_COOLDOWN_SECONDS = 15.0
 class ControlResult:
     ok: bool
     message: str = ""
+
+
+@dataclass(frozen=True)
+class ChatTriggerBuildResult:
+    ok: bool
+    message: str = ""
+    value: ChatTriggerConfig | None = None
+
+
+@dataclass(frozen=True)
+class CoordinateLockBuildResult:
+    ok: bool
+    message: str = ""
+    value: CoordinateLockConfig | None = None
 
 
 class ControlPanelController:
@@ -611,14 +632,20 @@ class HoloQuizControlPanel:
         config = load_config(config_path)
         self.config = config
         self.controls = RuntimeControls.from_config(config)
+        if self.controls.get_coordinate_locks() != config.coordinate_locks:
+            save_coordinate_lock_settings(
+                config_path,
+                self.controls.get_coordinate_locks(),
+                enabled=config.coordinate_lock_enabled,
+            )
         self.controller = ControlPanelController(self.controls)
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker = BotWorker(config_path, self.controls, self.log_queue)
         self.screen_phrase_watcher = ScreenPhraseWatcher(OcrScreenTextReader())
 
-        self.root.title("HoloQuiz Control Panel")
-        self.root.geometry("820x620")
-        self.root.minsize(680, 520)
+        self.root.title(APP_TITLE)
+        self.root.geometry("920x880")
+        self.root.minsize(760, 700)
 
         snapshot = self.controls.snapshot()
         self.program_var = tk.BooleanVar(value=snapshot.program_enabled)
@@ -636,7 +663,28 @@ class HoloQuizControlPanel:
         self.screen_phrase_auto_send_var = tk.BooleanVar(
             value=config.screen_phrase_auto_send_result
         )
+        self.chat_trigger_trigger_var = tk.StringVar(value="")
+        self.chat_trigger_macro_var = tk.StringVar(value="")
+        self.chat_trigger_cooldown_var = tk.StringVar(value="30")
+        self.chat_trigger_typing_interval_var = tk.StringVar(
+            value=f"{config.typing_interval_seconds:g}"
+        )
+        self.chat_trigger_status_var = tk.StringVar(value="")
+        self.chat_trigger_dry_run_var = tk.BooleanVar(
+            value=config.chat_trigger_dry_run
+        )
+        self.chat_trigger_editing_id: str | None = None
+        self.coordinate_lock_enabled_var = tk.BooleanVar(
+            value=config.coordinate_lock_enabled
+        )
+        self.coordinate_lock_name_var = tk.StringVar(value="")
+        self.coordinate_lock_x_var = tk.StringVar(value="")
+        self.coordinate_lock_y_var = tk.StringVar(value="")
+        self.coordinate_lock_z_var = tk.StringVar(value="")
+        self.coordinate_lock_status_var = tk.StringVar(value="")
         self.function_vars: dict[str, tk.BooleanVar] = {}
+        self.chat_trigger_enabled_vars: dict[str, tk.BooleanVar] = {}
+        self.coordinate_lock_enabled_vars: dict[str, tk.BooleanVar] = {}
         self.screen_phrase_trigger_var.trace_add(
             "write",
             lambda *_args: self._on_screen_phrase_trigger_change(),
@@ -649,11 +697,17 @@ class HoloQuizControlPanel:
             debug_enabled_provider=self.screen_phrase_debug_var.get,
             auto_send_result_provider=self.screen_phrase_auto_send_var.get,
         )
+        self.coordinate_lock_worker = CoordinateLockWorker(
+            self.controls,
+            self.log_queue,
+            player_client=PlayerDataClient(config.player_data_url),
+        )
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.worker.start()
         self.screen_phrase_worker.start()
+        self.coordinate_lock_worker.start()
         self._refresh_status()
         self._drain_logs()
 
@@ -663,7 +717,7 @@ class HoloQuizControlPanel:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(3, weight=1)
+        outer.rowconfigure(5, weight=1)
 
         status_row = ttk.Frame(outer)
         status_row.grid(row=0, column=0, sticky="ew", pady=(0, 10))
@@ -814,9 +868,151 @@ class HoloQuizControlPanel:
             textvariable=self.screen_phrase_status_var,
         ).grid(row=1, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=(6, 0))
 
+        chat_trigger_frame = ttk.LabelFrame(outer, text="Chat Trigger", padding=10)
+        chat_trigger_frame.grid(row=3, column=0, sticky="new", pady=(0, 10))
+        chat_trigger_frame.columnconfigure(0, weight=1)
+
+        chat_trigger_action_row = ttk.Frame(chat_trigger_frame)
+        chat_trigger_action_row.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        chat_trigger_action_row.columnconfigure(2, weight=1)
+        ttk.Button(
+            chat_trigger_action_row,
+            text="New chat trigger",
+            command=self._on_new_chat_trigger,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(
+            chat_trigger_action_row,
+            text="Dry-run",
+            variable=self.chat_trigger_dry_run_var,
+            command=self._on_chat_trigger_dry_run_toggle,
+        ).grid(row=0, column=1, sticky="w", padx=(12, 0))
+        ttk.Label(
+            chat_trigger_action_row,
+            textvariable=self.chat_trigger_status_var,
+        ).grid(row=0, column=2, sticky="ew", padx=(8, 0))
+
+        chat_trigger_form = ttk.Frame(chat_trigger_frame)
+        chat_trigger_form.grid(row=1, column=0, sticky="ew")
+        chat_trigger_form.columnconfigure(1, weight=1)
+        chat_trigger_form.columnconfigure(3, weight=1)
+        ttk.Label(chat_trigger_form, text="Trigger Phase").grid(
+            row=0,
+            column=0,
+            sticky="w",
+        )
+        ttk.Entry(
+            chat_trigger_form,
+            textvariable=self.chat_trigger_trigger_var,
+            width=26,
+        ).grid(row=0, column=1, sticky="ew", padx=(6, 10))
+        ttk.Label(chat_trigger_form, text="Micro").grid(row=0, column=2, sticky="w")
+        ttk.Entry(
+            chat_trigger_form,
+            textvariable=self.chat_trigger_macro_var,
+            width=34,
+        ).grid(row=0, column=3, sticky="ew", padx=(6, 10))
+        ttk.Label(chat_trigger_form, text="Cooldown").grid(
+            row=0,
+            column=4,
+            sticky="w",
+        )
+        ttk.Entry(
+            chat_trigger_form,
+            textvariable=self.chat_trigger_cooldown_var,
+            width=8,
+        ).grid(row=0, column=5, sticky="w", padx=(6, 10))
+        ttk.Label(chat_trigger_form, text="Typing interval").grid(
+            row=0,
+            column=6,
+            sticky="w",
+        )
+        ttk.Entry(
+            chat_trigger_form,
+            textvariable=self.chat_trigger_typing_interval_var,
+            width=8,
+        ).grid(row=0, column=7, sticky="w", padx=(6, 10))
+        self.chat_trigger_submit_button = ttk.Button(
+            chat_trigger_form,
+            text="Create",
+            command=self._on_create_or_update_chat_trigger,
+        )
+        self.chat_trigger_submit_button.grid(row=0, column=8, sticky="w")
+
+        self.chat_trigger_rows_frame = ttk.Frame(chat_trigger_frame)
+        self.chat_trigger_rows_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self.chat_trigger_rows_frame.columnconfigure(1, weight=1)
+        self.chat_trigger_rows_frame.columnconfigure(2, weight=1)
+        self._refresh_chat_trigger_rows()
+
+        coordinate_lock_frame = ttk.LabelFrame(
+            outer,
+            text="Lock Coordinate",
+            padding=10,
+        )
+        coordinate_lock_frame.grid(row=4, column=0, sticky="new", pady=(0, 10))
+        coordinate_lock_frame.columnconfigure(0, weight=1)
+
+        coordinate_lock_form = ttk.Frame(coordinate_lock_frame)
+        coordinate_lock_form.grid(row=0, column=0, sticky="ew")
+        coordinate_lock_form.columnconfigure(11, weight=1)
+        ttk.Checkbutton(
+            coordinate_lock_form,
+            text="Enable coordinate lock",
+            variable=self.coordinate_lock_enabled_var,
+            command=self._on_coordinate_lock_master_toggle,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(coordinate_lock_form, text="Name").grid(
+            row=0,
+            column=1,
+            sticky="w",
+        )
+        ttk.Entry(
+            coordinate_lock_form,
+            textvariable=self.coordinate_lock_name_var,
+            width=16,
+        ).grid(row=0, column=2, sticky="w", padx=(4, 8))
+        for column, (label, variable) in enumerate(
+            (
+                ("X", self.coordinate_lock_x_var),
+                ("Y", self.coordinate_lock_y_var),
+                ("Z", self.coordinate_lock_z_var),
+            ),
+            start=2,
+        ):
+            entry_column = column * 2
+            ttk.Label(coordinate_lock_form, text=label).grid(
+                row=0,
+                column=entry_column - 1,
+                sticky="w",
+            )
+            ttk.Entry(
+                coordinate_lock_form,
+                textvariable=variable,
+                width=10,
+            ).grid(row=0, column=entry_column, sticky="w", padx=(4, 8))
+        ttk.Button(
+            coordinate_lock_form,
+            text="Add coordinate",
+            command=self._on_add_coordinate_lock,
+        ).grid(row=0, column=9, sticky="w", padx=(2, 6))
+        ttk.Button(
+            coordinate_lock_form,
+            text="Lock Here",
+            command=self._on_lock_here,
+        ).grid(row=0, column=10, sticky="w")
+        ttk.Label(
+            coordinate_lock_form,
+            textvariable=self.coordinate_lock_status_var,
+        ).grid(row=0, column=11, sticky="ew", padx=(8, 0))
+
+        self.coordinate_lock_rows_frame = ttk.Frame(coordinate_lock_frame)
+        self.coordinate_lock_rows_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.coordinate_lock_rows_frame.columnconfigure(1, weight=1)
+        self._refresh_coordinate_lock_rows()
+
         log_frame = ttk.LabelFrame(outer, text="Log", padding=8)
-        log_frame.grid(row=3, column=0, sticky="nsew")
-        outer.rowconfigure(3, weight=1)
+        log_frame.grid(row=5, column=0, sticky="nsew")
+        outer.rowconfigure(5, weight=1)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self.log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled")
@@ -898,6 +1094,332 @@ class HoloQuizControlPanel:
     def _on_screen_phrase_auto_send_change(self) -> None:
         self._save_screen_phrase_settings()
 
+    def _on_chat_trigger_dry_run_toggle(self) -> None:
+        self.controls.set_chat_trigger_dry_run(self.chat_trigger_dry_run_var.get())
+        self._save_chat_triggers_settings()
+
+    def _on_new_chat_trigger(self) -> None:
+        self.chat_trigger_editing_id = None
+        self.chat_trigger_trigger_var.set("")
+        self.chat_trigger_macro_var.set("")
+        self.chat_trigger_cooldown_var.set("30")
+        self.chat_trigger_typing_interval_var.set(
+            f"{self.controls.get_config().typing_interval_seconds:g}"
+        )
+        self.chat_trigger_submit_button.configure(text="Create")
+        self.chat_trigger_status_var.set("")
+
+    def _on_create_or_update_chat_trigger(self) -> None:
+        result = self._build_chat_trigger_from_form()
+        if not result.ok:
+            self.chat_trigger_status_var.set(result.message)
+            return
+
+        trigger = result.value
+        if trigger is None:
+            self.chat_trigger_status_var.set("Could not build chat trigger.")
+            return
+        triggers = list(self.controls.get_chat_triggers())
+        if self.chat_trigger_editing_id is None:
+            triggers.append(trigger)
+            self.chat_trigger_status_var.set("Chat trigger created.")
+        else:
+            triggers = [
+                trigger if item.id == self.chat_trigger_editing_id else item
+                for item in triggers
+            ]
+            self.chat_trigger_status_var.set("Chat trigger updated.")
+
+        self.controls.set_chat_triggers(triggers)
+        self._save_chat_triggers_settings()
+        self._refresh_chat_trigger_rows()
+        self.chat_trigger_editing_id = None
+        self.chat_trigger_trigger_var.set("")
+        self.chat_trigger_macro_var.set("")
+        self.chat_trigger_cooldown_var.set("30")
+        self.chat_trigger_typing_interval_var.set(
+            f"{self.controls.get_config().typing_interval_seconds:g}"
+        )
+        self.chat_trigger_submit_button.configure(text="Create")
+
+    def _build_chat_trigger_from_form(self) -> ChatTriggerBuildResult:
+        trigger_phrase = self.chat_trigger_trigger_var.get().strip()
+        macro = self.chat_trigger_macro_var.get().strip()
+        if not trigger_phrase:
+            return ChatTriggerBuildResult(False, message="Trigger Phase is required.")
+        if not macro:
+            return ChatTriggerBuildResult(False, message="Micro is required.")
+
+        try:
+            cooldown_seconds = float(self.chat_trigger_cooldown_var.get())
+        except ValueError:
+            return ChatTriggerBuildResult(False, message="Cooldown must be a number.")
+        if cooldown_seconds < 0:
+            return ChatTriggerBuildResult(
+                False,
+                message="Cooldown must be 0 or greater.",
+            )
+        try:
+            typing_interval_seconds = float(
+                self.chat_trigger_typing_interval_var.get()
+            )
+        except ValueError:
+            return ChatTriggerBuildResult(
+                False,
+                message="Typing interval must be a number.",
+            )
+        if typing_interval_seconds < 0:
+            return ChatTriggerBuildResult(
+                False,
+                message="Typing interval must be 0 or greater.",
+            )
+
+        existing = self._chat_trigger_by_id(self.chat_trigger_editing_id)
+        return ChatTriggerBuildResult(
+            True,
+            value=ChatTriggerConfig(
+                id=existing.id if existing is not None else uuid4().hex,
+                trigger_phrase=trigger_phrase,
+                macro=macro,
+                cooldown_seconds=cooldown_seconds,
+                typing_interval_seconds=typing_interval_seconds,
+                enabled=existing.enabled if existing is not None else True,
+            ),
+        )
+
+    def _on_chat_trigger_toggle(self, trigger_id: str) -> None:
+        variable = self.chat_trigger_enabled_vars[trigger_id]
+        triggers = [
+            replace(trigger, enabled=variable.get()) if trigger.id == trigger_id else trigger
+            for trigger in self.controls.get_chat_triggers()
+        ]
+        self.controls.set_chat_triggers(triggers)
+        self._save_chat_triggers_settings()
+        self._refresh_chat_trigger_rows()
+
+    def _on_edit_chat_trigger(self, trigger_id: str) -> None:
+        trigger = self._chat_trigger_by_id(trigger_id)
+        if trigger is None:
+            return
+        self.chat_trigger_editing_id = trigger.id
+        self.chat_trigger_trigger_var.set(trigger.trigger_phrase)
+        self.chat_trigger_macro_var.set(trigger.macro)
+        self.chat_trigger_cooldown_var.set(f"{trigger.cooldown_seconds:g}")
+        typing_interval_seconds = (
+            self.controls.get_config().typing_interval_seconds
+            if trigger.typing_interval_seconds is None
+            else trigger.typing_interval_seconds
+        )
+        self.chat_trigger_typing_interval_var.set(f"{typing_interval_seconds:g}")
+        self.chat_trigger_submit_button.configure(text="Save")
+        self.chat_trigger_status_var.set("Editing chat trigger.")
+
+    def _on_delete_chat_trigger(self, trigger_id: str) -> None:
+        triggers = [
+            trigger
+            for trigger in self.controls.get_chat_triggers()
+            if trigger.id != trigger_id
+        ]
+        self.controls.set_chat_triggers(triggers)
+        self._save_chat_triggers_settings()
+        self._refresh_chat_trigger_rows()
+        if self.chat_trigger_editing_id == trigger_id:
+            self._on_new_chat_trigger()
+        self.chat_trigger_status_var.set("Chat trigger deleted.")
+
+    def _refresh_chat_trigger_rows(self) -> None:
+        for child in self.chat_trigger_rows_frame.winfo_children():
+            child.destroy()
+
+        self.chat_trigger_enabled_vars = {}
+        triggers = self.controls.get_chat_triggers()
+        if not triggers:
+            ttk.Label(
+                self.chat_trigger_rows_frame,
+                text="No chat triggers created.",
+            ).grid(row=0, column=0, sticky="w")
+            return
+
+        for row, trigger in enumerate(triggers):
+            enabled_var = tk.BooleanVar(value=trigger.enabled)
+            self.chat_trigger_enabled_vars[trigger.id] = enabled_var
+            ttk.Checkbutton(
+                self.chat_trigger_rows_frame,
+                variable=enabled_var,
+                command=lambda trigger_id=trigger.id: self._on_chat_trigger_toggle(
+                    trigger_id
+                ),
+            ).grid(row=row, column=0, sticky="w")
+            ttk.Label(
+                self.chat_trigger_rows_frame,
+                text=ellipsize_text(trigger.trigger_phrase, 38),
+            ).grid(row=row, column=1, sticky="ew", padx=(4, 8))
+            ttk.Label(
+                self.chat_trigger_rows_frame,
+                text=ellipsize_text(trigger.macro, 42),
+            ).grid(row=row, column=2, sticky="ew", padx=(0, 8))
+            ttk.Label(
+                self.chat_trigger_rows_frame,
+                text=f"{trigger.cooldown_seconds:g}s",
+                width=8,
+            ).grid(row=row, column=3, sticky="w", padx=(0, 8))
+            typing_interval_seconds = (
+                self.controls.get_config().typing_interval_seconds
+                if trigger.typing_interval_seconds is None
+                else trigger.typing_interval_seconds
+            )
+            ttk.Label(
+                self.chat_trigger_rows_frame,
+                text=f"{typing_interval_seconds:g}s/key",
+                width=9,
+            ).grid(row=row, column=4, sticky="w", padx=(0, 8))
+            ttk.Button(
+                self.chat_trigger_rows_frame,
+                text="Edit",
+                command=lambda trigger_id=trigger.id: self._on_edit_chat_trigger(
+                    trigger_id
+                ),
+            ).grid(row=row, column=5, sticky="w", padx=(0, 6))
+            ttk.Button(
+                self.chat_trigger_rows_frame,
+                text="Delete",
+                command=lambda trigger_id=trigger.id: self._on_delete_chat_trigger(
+                    trigger_id
+                ),
+            ).grid(row=row, column=6, sticky="w")
+
+    def _save_chat_triggers_settings(self) -> None:
+        save_chat_triggers_settings(
+            self.config_path,
+            self.controls.get_chat_triggers(),
+            dry_run=self.chat_trigger_dry_run_var.get(),
+        )
+
+    def _on_coordinate_lock_master_toggle(self) -> None:
+        enabled = self.coordinate_lock_enabled_var.get()
+        self.controls.set_coordinate_lock_enabled(enabled)
+        self._save_coordinate_lock_settings()
+        self.coordinate_lock_status_var.set("Enabled." if enabled else "Disabled.")
+
+    def _on_add_coordinate_lock(self) -> None:
+        result = self._build_coordinate_lock_from_form()
+        if not result.ok or result.value is None:
+            self.coordinate_lock_status_var.set(result.message)
+            return
+        locks = [
+            replace(lock, enabled=False)
+            for lock in self.controls.get_coordinate_locks()
+        ]
+        locks.append(result.value)
+        self.controls.set_coordinate_locks(locks)
+        self._save_coordinate_lock_settings()
+        self._refresh_coordinate_lock_rows()
+        self.coordinate_lock_status_var.set("Coordinate added.")
+        self.coordinate_lock_name_var.set("")
+        self.coordinate_lock_x_var.set("")
+        self.coordinate_lock_y_var.set("")
+        self.coordinate_lock_z_var.set("")
+
+    def _build_coordinate_lock_from_form(self) -> CoordinateLockBuildResult:
+        name = self.coordinate_lock_name_var.get().strip()
+        if not name:
+            return CoordinateLockBuildResult(False, "Enter a name for this coordinate.")
+        try:
+            x = float(self.coordinate_lock_x_var.get().strip())
+            y = float(self.coordinate_lock_y_var.get().strip())
+            z = float(self.coordinate_lock_z_var.get().strip())
+        except ValueError:
+            return CoordinateLockBuildResult(False, "X, Y, and Z must be numbers.")
+        return CoordinateLockBuildResult(
+            True,
+            value=CoordinateLockConfig(id=uuid4().hex, x=x, y=y, z=z, name=name),
+        )
+
+    def _on_lock_here(self) -> None:
+        self.coordinate_lock_status_var.set("Reading player position...")
+        self.root.update_idletasks()
+        try:
+            position = PlayerDataClient(
+                self.controls.get_config().player_data_url
+            ).get_position()
+        except Exception as error:
+            self.coordinate_lock_status_var.set(f"Could not read position: {error}")
+            return
+        self.coordinate_lock_x_var.set(f"{position.x:.3f}")
+        self.coordinate_lock_y_var.set(f"{position.y:.3f}")
+        self.coordinate_lock_z_var.set(f"{position.z:.3f}")
+        self.coordinate_lock_status_var.set("Current position loaded; click Add coordinate.")
+
+    def _on_coordinate_lock_toggle(self, lock_id: str) -> None:
+        enabled = self.coordinate_lock_enabled_vars[lock_id].get()
+        locks = [
+            replace(lock, enabled=(enabled if lock.id == lock_id else False))
+            for lock in self.controls.get_coordinate_locks()
+        ]
+        self.controls.set_coordinate_locks(locks)
+        self._save_coordinate_lock_settings()
+        self._refresh_coordinate_lock_rows()
+
+    def _on_delete_coordinate_lock(self, lock_id: str) -> None:
+        locks = [
+            lock for lock in self.controls.get_coordinate_locks() if lock.id != lock_id
+        ]
+        self.controls.set_coordinate_locks(locks)
+        self._save_coordinate_lock_settings()
+        self._refresh_coordinate_lock_rows()
+        self.coordinate_lock_status_var.set("Coordinate deleted.")
+
+    def _refresh_coordinate_lock_rows(self) -> None:
+        for child in self.coordinate_lock_rows_frame.winfo_children():
+            child.destroy()
+        self.coordinate_lock_enabled_vars = {}
+        locks = self.controls.get_coordinate_locks()
+        if not locks:
+            ttk.Label(
+                self.coordinate_lock_rows_frame,
+                text="No lock coordinates added.",
+            ).grid(row=0, column=0, sticky="w")
+            return
+        for row, lock in enumerate(locks):
+            enabled_var = tk.BooleanVar(value=lock.enabled)
+            self.coordinate_lock_enabled_vars[lock.id] = enabled_var
+            ttk.Checkbutton(
+                self.coordinate_lock_rows_frame,
+                variable=enabled_var,
+                command=lambda lock_id=lock.id: self._on_coordinate_lock_toggle(
+                    lock_id
+                ),
+            ).grid(row=row, column=0, sticky="w")
+            ttk.Label(
+                self.coordinate_lock_rows_frame,
+                text=(
+                    f"{lock.name or 'Unnamed coordinate'}: "
+                    f"X {lock.x:g}    Y {lock.y:g}    Z {lock.z:g}"
+                ),
+            ).grid(row=row, column=1, sticky="w", padx=(4, 8))
+            ttk.Button(
+                self.coordinate_lock_rows_frame,
+                text="Delete",
+                command=lambda lock_id=lock.id: self._on_delete_coordinate_lock(
+                    lock_id
+                ),
+            ).grid(row=row, column=2, sticky="w")
+
+    def _save_coordinate_lock_settings(self) -> None:
+        save_coordinate_lock_settings(
+            self.config_path,
+            self.controls.get_coordinate_locks(),
+            enabled=self.coordinate_lock_enabled_var.get(),
+        )
+
+    def _chat_trigger_by_id(self, trigger_id: str | None) -> ChatTriggerConfig | None:
+        if trigger_id is None:
+            return None
+        for trigger in self.controls.get_chat_triggers():
+            if trigger.id == trigger_id:
+                return trigger
+        return None
+
     def _load_screen_phrase_settings(self, config: BotConfig) -> None:
         self.screen_phrase_watcher.set_trigger_phrase(config.screen_phrase_trigger)
         if config.screen_phrase_trigger_region is not None:
@@ -963,6 +1485,7 @@ class HoloQuizControlPanel:
     def close(self) -> None:
         self.worker.stop()
         self.screen_phrase_worker.stop()
+        self.coordinate_lock_worker.stop()
         self.root.after(100, self.root.destroy)
 
 

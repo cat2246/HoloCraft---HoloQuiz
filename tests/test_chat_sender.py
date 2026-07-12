@@ -190,3 +190,123 @@ def test_live_sender_reports_missing_pyautogui(monkeypatch, capsys):
     sender.send("Creeper")
 
     assert "[send-error] pyautogui is not installed" in capsys.readouterr().out
+
+
+def test_live_sender_runs_macro_text_and_enter_token(monkeypatch, capsys):
+    fake = FakePyAutoGui()
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    sender = ChatSender(
+        BotConfig(
+            dry_run=False,
+            chat_trigger_dry_run=False,
+            typing_interval_seconds=0.02,
+        ),
+        pyautogui_module=fake,
+    )
+
+    sender.send_macro("tGood Morning{{Enter}}")
+
+    assert fake.calls == [
+        ("write", "tGood Morning", 0.02),
+        ("press", "enter"),
+    ]
+    assert "[macro] Ran macro: tGood Morning{{Enter}}" in capsys.readouterr().out
+
+
+def test_live_sender_runs_macro_with_interval_override(monkeypatch):
+    fake = FakePyAutoGui()
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    sender = ChatSender(
+        BotConfig(
+            dry_run=False,
+            chat_trigger_dry_run=False,
+            typing_interval_seconds=0.01,
+        ),
+        pyautogui_module=fake,
+    )
+
+    sender.send_macro("123", typing_interval_seconds=0.1)
+
+    assert fake.calls == [
+        ("write", "123", 0.1),
+    ]
+
+
+def test_live_sender_runs_macro_mouse_and_hotkey_tokens(monkeypatch):
+    class ClickPyAutoGui(FakePyAutoGui):
+        def click(self, button):
+            self.calls.append(("click", button))
+
+    fake = ClickPyAutoGui()
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    sender = ChatSender(
+        BotConfig(dry_run=False, chat_trigger_dry_run=False),
+        pyautogui_module=fake,
+    )
+
+    sender.send_macro("{{LButton}}{{Ctrl+V}}{{Escape}}")
+
+    assert fake.calls == [
+        ("click", "left"),
+        ("hotkey", "ctrl", "v"),
+        ("press", "escape"),
+    ]
+
+
+def test_live_sender_pauses_between_macro_button_tokens(monkeypatch):
+    class ClickPyAutoGui(FakePyAutoGui):
+        def click(self, button):
+            self.calls.append(("click", button))
+
+    fake = ClickPyAutoGui()
+    sleep_calls = []
+    monkeypatch.setattr("time.sleep", lambda seconds: sleep_calls.append(seconds))
+    sender = ChatSender(
+        BotConfig(
+            dry_run=False,
+            chat_trigger_dry_run=False,
+            send_delay_min_seconds=0.0,
+            send_delay_max_seconds=0.0,
+            typing_interval_seconds=0.01,
+        ),
+        pyautogui_module=fake,
+    )
+
+    sender.send_macro(
+        "{{LButton}}{{LButton}}{{LButton}}",
+        typing_interval_seconds=0.1,
+    )
+
+    assert fake.calls == [
+        ("click", "left"),
+        ("click", "left"),
+        ("click", "left"),
+    ]
+    assert sleep_calls == [0.0, 0.1, 0.1]
+
+
+def test_dry_run_sender_reports_macro_without_running(capsys):
+    fake = FakePyAutoGui()
+    sender = ChatSender(BotConfig(dry_run=True), pyautogui_module=fake)
+
+    sender.send_macro("tGood Morning{{Enter}}")
+
+    assert fake.calls == []
+    assert "[dry-run] Would run macro: tGood Morning{{Enter}}" in capsys.readouterr().out
+
+
+def test_macro_dry_run_is_independent_from_holoquiz_dry_run(monkeypatch, capsys):
+    fake = FakePyAutoGui()
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    sender = ChatSender(
+        BotConfig(dry_run=True, chat_trigger_dry_run=False),
+        pyautogui_module=fake,
+    )
+
+    sender.send_macro("tHi{{Enter}}")
+
+    assert fake.calls == [
+        ("write", "tHi", 0.01),
+        ("press", "enter"),
+    ]
+    assert "[macro] Ran macro: tHi{{Enter}}" in capsys.readouterr().out

@@ -7,6 +7,7 @@ import sys
 import time
 from typing import Callable, Protocol
 
+from holoquiz.chat_trigger import ChatTriggerRunner
 from holoquiz.chat_sender import ChatSender
 from holoquiz.codex_client import CodexAnswerClient
 from holoquiz.config import BotConfig, discover_default_log_path, load_config
@@ -28,6 +29,13 @@ class AnswerService(Protocol):
 
 class Sender(Protocol):
     def send(self, answer: str) -> None:
+        ...
+
+    def send_macro(
+        self,
+        macro: str,
+        typing_interval_seconds: float | None = None,
+    ) -> None:
         ...
 
 
@@ -55,6 +63,7 @@ class HoloQuizBot:
         self.sender = sender
         self._before_live_answer_send = before_live_answer_send
         self.clock = clock
+        self.chat_trigger_runner = ChatTriggerRunner(sender, clock=clock)
         self.pending_question: PendingQuestion | None = None
         self._last_question_times: dict[str, float] = {}
 
@@ -64,6 +73,11 @@ class HoloQuizBot:
     def handle_line(self, line: str) -> None:
         if not self.runtime_controls.is_program_enabled():
             return
+
+        self.chat_trigger_runner.handle_line(
+            line,
+            self.runtime_controls.get_config().chat_triggers,
+        )
 
         event = parse_log_line(line)
         if event is None:

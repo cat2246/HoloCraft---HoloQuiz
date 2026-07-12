@@ -3,9 +3,13 @@ from pathlib import Path
 
 from holoquiz.config import (
     BotConfig,
+    ChatTriggerConfig,
+    CoordinateLockConfig,
     ScreenPhraseRegionConfig,
     discover_default_log_path,
     load_config,
+    save_chat_triggers_settings,
+    save_coordinate_lock_settings,
     save_screen_phrase_settings,
 )
 
@@ -40,7 +44,52 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "screen_phrase_trigger_region": None,
         "screen_phrase_result_region": None,
         "screen_phrase_auto_send_result": False,
+        "chat_trigger_dry_run": True,
+        "chat_triggers": [],
+        "coordinate_lock_enabled": False,
+        "coordinate_locks": [],
+        "coordinate_lock_max_distance": 50.0,
+        "coordinate_lock_tolerance": 0.75,
+        "player_data_url": "http://localhost:8025/data/player",
     }
+
+
+def test_load_and_save_coordinate_locks(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"dry_run": False}), encoding="utf-8")
+    locks = [
+        CoordinateLockConfig(id="home", x=1.5, y=64.0, z=-3.25, name="Home"),
+        CoordinateLockConfig(
+            id="afk", x=10.0, y=70.0, z=20.0, enabled=False, name="AFK Room"
+        ),
+    ]
+
+    save_coordinate_lock_settings(config_path, locks, enabled=True)
+    config = load_config(config_path)
+
+    assert config.dry_run is False
+    assert config.coordinate_lock_enabled is True
+    assert config.coordinate_locks == tuple(locks)
+
+
+def test_load_coordinate_locks_without_names_keeps_backward_compatibility(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "coordinate_locks": [
+                    {"id": "old-lock", "x": 1, "y": 64, "z": -2},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.coordinate_locks == (
+        CoordinateLockConfig(id="old-lock", x=1.0, y=64.0, z=-2.0),
+    )
 
 
 def test_load_config_overrides_defaults(tmp_path):
@@ -221,3 +270,112 @@ def test_save_screen_phrase_settings_preserves_existing_config(tmp_path):
         "height": 50,
     }
     assert raw_config["screen_phrase_auto_send_result"] is True
+
+
+def test_load_config_reads_chat_triggers(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "chat_triggers": [
+                    {
+                        "id": "morning",
+                        "trigger_phrase": "Good Morning!",
+                        "macro": "tGood Morning{{Enter}}",
+                        "cooldown_seconds": 12.5,
+                        "typing_interval_seconds": 0.08,
+                        "enabled": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.chat_triggers == (
+        ChatTriggerConfig(
+            id="morning",
+            trigger_phrase="Good Morning!",
+            macro="tGood Morning{{Enter}}",
+            cooldown_seconds=12.5,
+            typing_interval_seconds=0.08,
+            enabled=True,
+        ),
+    )
+
+
+def test_save_chat_triggers_settings_preserves_existing_config(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"dry_run": False, "screen_phrase_trigger": "AFK"}),
+        encoding="utf-8",
+    )
+
+    save_chat_triggers_settings(
+        config_path,
+        [
+            ChatTriggerConfig(
+                id="morning",
+                trigger_phrase="Good Morning!",
+                macro="tGood Morning{{Enter}}",
+                cooldown_seconds=12.5,
+                typing_interval_seconds=0.08,
+                enabled=False,
+            )
+        ],
+        dry_run=False,
+    )
+
+    raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert raw_config["dry_run"] is False
+    assert raw_config["screen_phrase_trigger"] == "AFK"
+    assert raw_config["chat_trigger_dry_run"] is False
+    assert raw_config["chat_triggers"] == [
+        {
+            "id": "morning",
+            "trigger_phrase": "Good Morning!",
+            "macro": "tGood Morning{{Enter}}",
+            "cooldown_seconds": 12.5,
+            "typing_interval_seconds": 0.08,
+            "enabled": False,
+        }
+    ]
+
+
+def test_load_config_keeps_missing_chat_trigger_typing_interval_as_fallback(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "chat_triggers": [
+                    {
+                        "id": "legacy",
+                        "trigger_phrase": "Good Morning!",
+                        "macro": "tGood Morning{{Enter}}",
+                        "cooldown_seconds": 12.5,
+                        "enabled": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.chat_triggers[0].typing_interval_seconds is None
+
+
+def test_load_config_reads_chat_trigger_dry_run(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"dry_run": True, "chat_trigger_dry_run": False}),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.dry_run is True
+    assert config.chat_trigger_dry_run is False

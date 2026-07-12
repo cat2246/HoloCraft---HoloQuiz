@@ -16,6 +16,26 @@ class ScreenPhraseRegionConfig:
 
 
 @dataclass(frozen=True)
+class ChatTriggerConfig:
+    id: str
+    trigger_phrase: str
+    macro: str
+    cooldown_seconds: float
+    typing_interval_seconds: float | None = None
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class CoordinateLockConfig:
+    id: str
+    x: float
+    y: float
+    z: float
+    enabled: bool = True
+    name: str = ""
+
+
+@dataclass(frozen=True)
 class BotConfig:
     log_path: Path | None = None
     program_enabled: bool = True
@@ -42,6 +62,13 @@ class BotConfig:
     screen_phrase_trigger_region: ScreenPhraseRegionConfig | None = None
     screen_phrase_result_region: ScreenPhraseRegionConfig | None = None
     screen_phrase_auto_send_result: bool = False
+    chat_trigger_dry_run: bool = True
+    chat_triggers: tuple[ChatTriggerConfig, ...] = ()
+    coordinate_lock_enabled: bool = False
+    coordinate_locks: tuple[CoordinateLockConfig, ...] = ()
+    coordinate_lock_max_distance: float = 50.0
+    coordinate_lock_tolerance: float = 0.75
+    player_data_url: str = "http://localhost:8025/data/player"
 
 
 def discover_default_log_path() -> Path | None:
@@ -118,6 +145,12 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
         values["screen_phrase_result_region"] = _region_from_json(
             values["screen_phrase_result_region"]
         )
+    if "chat_triggers" in values:
+        values["chat_triggers"] = _chat_triggers_from_json(values["chat_triggers"])
+    if "coordinate_locks" in values:
+        values["coordinate_locks"] = _coordinate_locks_from_json(
+            values["coordinate_locks"]
+        )
 
     return BotConfig(**values)
 
@@ -146,6 +179,50 @@ def save_screen_phrase_settings(
     )
 
 
+def save_chat_triggers_settings(
+    path: Path,
+    triggers: list[ChatTriggerConfig] | tuple[ChatTriggerConfig, ...],
+    dry_run: bool | None = None,
+) -> None:
+    raw_config: dict[str, Any] = {}
+    if path.exists():
+        raw_config = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(raw_config, dict):
+            raise ValueError("Config root must be a JSON object.")
+
+    raw_config["chat_triggers"] = [
+        _chat_trigger_to_json(trigger) for trigger in triggers
+    ]
+    if dry_run is not None:
+        raw_config["chat_trigger_dry_run"] = dry_run
+    path.write_text(
+        json.dumps(raw_config, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def save_coordinate_lock_settings(
+    path: Path,
+    locks: list[CoordinateLockConfig] | tuple[CoordinateLockConfig, ...],
+    *,
+    enabled: bool,
+) -> None:
+    raw_config: dict[str, Any] = {}
+    if path.exists():
+        raw_config = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(raw_config, dict):
+            raise ValueError("Config root must be a JSON object.")
+
+    raw_config["coordinate_lock_enabled"] = enabled
+    raw_config["coordinate_locks"] = [
+        _coordinate_lock_to_json(lock) for lock in locks
+    ]
+    path.write_text(
+        json.dumps(raw_config, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _region_from_json(value: Any) -> ScreenPhraseRegionConfig | None:
     if value is None:
         return None
@@ -165,11 +242,93 @@ def _region_to_json(region: ScreenPhraseRegionConfig | None) -> dict[str, int] |
     return asdict(region)
 
 
+def _chat_triggers_from_json(value: Any) -> tuple[ChatTriggerConfig, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError("chat_triggers must be a list.")
+
+    triggers: list[ChatTriggerConfig] = []
+    for raw_trigger in value:
+        if not isinstance(raw_trigger, dict):
+            raise ValueError("Each chat trigger must be an object.")
+        triggers.append(
+            ChatTriggerConfig(
+                id=str(raw_trigger["id"]),
+                trigger_phrase=str(raw_trigger["trigger_phrase"]),
+                macro=str(raw_trigger["macro"]),
+                cooldown_seconds=float(raw_trigger.get("cooldown_seconds", 0.0)),
+                typing_interval_seconds=_optional_float(
+                    raw_trigger.get("typing_interval_seconds")
+                ),
+                enabled=bool(raw_trigger.get("enabled", True)),
+            )
+        )
+    return tuple(triggers)
+
+
+def _chat_trigger_to_json(trigger: ChatTriggerConfig) -> dict[str, Any]:
+    return {
+        "id": trigger.id,
+        "trigger_phrase": trigger.trigger_phrase,
+        "macro": trigger.macro,
+        "cooldown_seconds": trigger.cooldown_seconds,
+        "typing_interval_seconds": trigger.typing_interval_seconds,
+        "enabled": trigger.enabled,
+    }
+
+
+def _coordinate_locks_from_json(value: Any) -> tuple[CoordinateLockConfig, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError("coordinate_locks must be a list.")
+
+    locks: list[CoordinateLockConfig] = []
+    for raw_lock in value:
+        if not isinstance(raw_lock, dict):
+            raise ValueError("Each coordinate lock must be an object.")
+        locks.append(
+            CoordinateLockConfig(
+                id=str(raw_lock["id"]),
+                x=float(raw_lock["x"]),
+                y=float(raw_lock["y"]),
+                z=float(raw_lock["z"]),
+                enabled=bool(raw_lock.get("enabled", True)),
+                name=str(raw_lock.get("name", "")).strip(),
+            )
+        )
+    return tuple(locks)
+
+
+def _coordinate_lock_to_json(lock: CoordinateLockConfig) -> dict[str, Any]:
+    return {
+        "id": lock.id,
+        "x": lock.x,
+        "y": lock.y,
+        "z": lock.z,
+        "enabled": lock.enabled,
+        "name": lock.name,
+    }
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
 def _config_to_json_dict(config: BotConfig) -> dict[str, Any]:
     values = asdict(config)
     values["log_path"] = str(config.log_path) if config.log_path else ""
     values["dry_run_sound_path"] = (
         str(config.dry_run_sound_path) if config.dry_run_sound_path else ""
     )
+    values["chat_triggers"] = [
+        _chat_trigger_to_json(trigger) for trigger in config.chat_triggers
+    ]
+    values["coordinate_locks"] = [
+        _coordinate_lock_to_json(lock) for lock in config.coordinate_locks
+    ]
     values.pop("memory_path")
     return values
