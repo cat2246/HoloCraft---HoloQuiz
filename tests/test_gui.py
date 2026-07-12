@@ -14,7 +14,11 @@ from holoquiz.runtime import (
     SCREEN_PHRASE_WATCHER_FUNCTION,
     RuntimeControls,
 )
-from holoquiz.screen_phrase_watcher import ScreenPhraseWatcher, ScreenReadRegion
+from holoquiz.screen_phrase_watcher import (
+    SCREEN_PHRASE_SOURCE_TITLE_API,
+    ScreenPhraseWatcher,
+    ScreenReadRegion,
+)
 
 
 def test_gui_app_title_is_holocraft_tools():
@@ -217,6 +221,73 @@ def test_screen_phrase_worker_auto_sends_result_after_five_stable_reads():
     worker._check_screen()
 
     assert sent_results == ["Good Morning!"]
+
+
+def test_title_api_auto_send_resets_five_read_check_when_title_changes():
+    controls = RuntimeControls.from_config(BotConfig())
+    controls.set_function_enabled(SCREEN_PHRASE_WATCHER_FUNCTION, True)
+
+    class TitleClient:
+        def __init__(self):
+            self.titles = iter(
+                ["Poki Moki"] * 4 + ["Hello World!"] * 5
+            )
+
+        def read_title(self):
+            return "Hi! Good Morning Sir!", next(self.titles)
+
+        def health(self):
+            return {"status": "ok"}
+
+    watcher = ScreenPhraseWatcher(lambda _region: "", TitleClient())
+    watcher.set_source(SCREEN_PHRASE_SOURCE_TITLE_API)
+    watcher.set_trigger_phrase("Good Morning Sir")
+    sent_results = []
+    worker = ScreenPhraseWorker(
+        controls,
+        watcher,
+        queue.Queue(),
+        auto_send_result_provider=lambda: True,
+        result_sender=sent_results.append,
+    )
+
+    for _ in range(8):
+        worker._check_screen()
+    assert sent_results == []
+
+    worker._check_screen()
+    assert sent_results == ["Hello World!"]
+
+
+def test_title_api_requires_five_fresh_reads_after_a_send():
+    controls = RuntimeControls.from_config(BotConfig())
+
+    class TitleClient:
+        def read_title(self):
+            return "Trigger", "Hello World!"
+
+        def health(self):
+            return {"status": "ok"}
+
+    watcher = ScreenPhraseWatcher(lambda _region: "", TitleClient())
+    watcher.set_source(SCREEN_PHRASE_SOURCE_TITLE_API)
+    watcher.set_trigger_phrase("Trigger")
+    sent_results = []
+    worker = ScreenPhraseWorker(
+        controls,
+        watcher,
+        queue.Queue(),
+        auto_send_result_provider=lambda: True,
+        result_sender=sent_results.append,
+        auto_send_cooldown_seconds=0,
+    )
+
+    for _ in range(9):
+        worker._check_screen()
+    assert sent_results == ["Hello World!"]
+
+    worker._check_screen()
+    assert sent_results == ["Hello World!", "Hello World!"]
 
 
 def test_screen_phrase_worker_does_not_auto_send_result_when_disabled():

@@ -102,6 +102,51 @@ def movement_key_for_target(
     )
 
 
+def heading_delta_for_target(
+    position: PlayerPosition,
+    lock: CoordinateLockConfig,
+) -> float:
+    """Return the shortest signed yaw change needed to face a lock."""
+    delta_x = lock.x - position.x
+    delta_z = lock.z - position.z
+    if math.hypot(delta_x, delta_z) <= 0.01:
+        return 0.0
+    target_heading = math.degrees(math.atan2(-delta_x, delta_z))
+    return (target_heading - position.heading + 180.0) % 360.0 - 180.0
+
+
+def camera_turn_pixels_for_target(
+    position: PlayerPosition,
+    lock: CoordinateLockConfig,
+    *,
+    mouse_counts_per_degree: float = 64.0,
+) -> int:
+    """Calculate an adaptive horizontal camera correction for a target."""
+    heading_delta = heading_delta_for_target(position, lock)
+    absolute_angle = abs(heading_delta)
+    if absolute_angle < 0.75:
+        return 0
+
+    horizontal_distance = math.hypot(lock.x - position.x, lock.z - position.z)
+    # Large heading errors need decisive turns, while small errors should be gentle.
+    angle_strength = 0.22 + 0.68 * min(absolute_angle / 90.0, 1.0)
+    # Direction matters increasingly as the player approaches the exact coordinate.
+    distance_strength = 0.72 + 0.28 / (1.0 + horizontal_distance / 12.0)
+    correction_degrees = heading_delta * angle_strength * distance_strength
+    # Minecraft consumes relative mouse counts rather than degrees. Around sixty-four
+    # counts per degree provides a useful turn at common in-game sensitivities;
+    # heading feedback on the next tick corrects any sensitivity-specific error.
+    mouse_counts = correction_degrees * mouse_counts_per_degree
+    return round(max(-9600.0, min(9600.0, mouse_counts)))
+
+
+def move_mouse_relative(x: int, y: int) -> None:
+    """Send relative mouse input that games using raw mouse capture can receive."""
+    if not hasattr(ctypes, "windll"):
+        raise RuntimeError("Native relative mouse input is only available on Windows.")
+    ctypes.windll.user32.mouse_event(0x0001, x, y, 0, 0)
+
+
 def minecraft_is_foreground() -> bool:
     if not hasattr(ctypes, "windll"):
         return True
@@ -122,8 +167,9 @@ class CoordinateLockWorker:
         player_client: PlayerDataClient | None = None,
         pyautogui_module: Any | None = None,
         foreground_provider: Callable[[], bool] = minecraft_is_foreground,
-        poll_seconds: float = 0.35,
-        key_hold_seconds: float = 0.18,
+        mouse_mover: Callable[[int, int], None] | None = None,
+        poll_seconds: float = 0.08,
+        key_hold_seconds: float = 0.12,
         input_coordinator: KeyboardInputCoordinator | None = None,
     ) -> None:
         self.controls = controls
@@ -131,6 +177,7 @@ class CoordinateLockWorker:
         self.player_client = player_client
         self._pyautogui = pyautogui_module
         self._foreground_provider = foreground_provider
+        self._mouse_mover = mouse_mover
         self.poll_seconds = poll_seconds
         self.key_hold_seconds = key_hold_seconds
         self._input_coordinator = input_coordinator or keyboard_input_coordinator
@@ -141,6 +188,9 @@ class CoordinateLockWorker:
         self._last_status = ""
         self._last_position: PlayerPosition | None = None
         self._stalled_checks = 0
+        self._mouse_counts_per_degree = 64.0
+        self._last_camera_command = 0
+        self._last_camera_heading: float | None = None
 
     def start(self) -> None:
         if self.is_running():
@@ -202,6 +252,7 @@ class CoordinateLockWorker:
             return
         try:
             position = self._client(config).get_position()
+            self._update_camera_calibration(position)
             nearest = nearest_enabled_lock(position, config.coordinate_locks)
             if nearest is None:
                 self._auto_hit_in_range.clear()
@@ -258,12 +309,32 @@ class CoordinateLockWorker:
         else:
             self._stalled_checks = 0
 
+    def _update_camera_calibration(self, position: PlayerPosition) -> None:
+        if self._last_camera_heading is None or not self._last_camera_command:
+            return
+        heading_change = (
+            position.heading - self._last_camera_heading + 180.0
+        ) % 360.0 - 180.0
+        self._last_camera_heading = None
+        command = self._last_camera_command
+        self._last_camera_command = 0
+        # Ignore tiny/noisy readings. Otherwise learn the real mouse-count to
+        # degree ratio produced by the user's Minecraft sensitivity setting.
+        if abs(heading_change) < 1.0 or command * heading_change <= 0:
+            return
+        observed_ratio = abs(command / heading_change)
+        observed_ratio = max(1.0, min(240.0, observed_ratio))
+        self._mouse_counts_per_degree = (
+            self._mouse_counts_per_degree * 0.65 + observed_ratio * 0.35
+        )
+
     def _move_toward(
         self,
         position: PlayerPosition,
         lock: CoordinateLockConfig,
     ) -> None:
-        key = movement_key_for_target(position, lock)
+        look_at_lock = self.controls.get_config().coordinate_lock_look_at_enabled
+        key = "w" if look_at_lock else movement_key_for_target(position, lock)
         should_jump = lock.y - position.y > 0.6 or self._stalled_checks >= 3
         keys = ([key] if key else []) + (["space"] if should_jump else [])
         if not keys:
@@ -278,10 +349,49 @@ class CoordinateLockWorker:
                 for pressed_key in keys:
                     pyautogui.keyDown(pressed_key)
                     pressed_keys.append(pressed_key)
-                self._stop_event.wait(self.key_hold_seconds)
+                mouse_x = (
+                    camera_turn_pixels_for_target(
+                        position,
+                        lock,
+                        mouse_counts_per_degree=self._mouse_counts_per_degree,
+                    )
+                    if look_at_lock
+                    else 0
+                )
+                if mouse_x:
+                    self._smooth_camera_turn(mouse_x, pyautogui)
+                    self._last_camera_command = mouse_x
+                    self._last_camera_heading = position.heading
+                else:
+                    self._stop_event.wait(self.key_hold_seconds)
             finally:
                 for pressed_key in reversed(pressed_keys):
                     pyautogui.keyUp(pressed_key)
+
+    def _smooth_camera_turn(self, mouse_x: int, pyautogui: Any) -> None:
+        # Ease out over several relative-input events so Minecraft receives a
+        # continuous turn instead of one visible camera jump.
+        step_count = max(12, min(120, math.ceil(abs(mouse_x) / 18)))
+        step_seconds = self.key_hold_seconds / step_count
+        previous_x = 0
+        for step in range(1, step_count + 1):
+            progress = step / step_count
+            eased_progress = 1.0 - (1.0 - progress) ** 2
+            current_x = round(mouse_x * eased_progress)
+            step_x = current_x - previous_x
+            if step_x:
+                self._turn_camera(step_x, 0, pyautogui)
+            previous_x = current_x
+            if self._stop_event.wait(step_seconds):
+                break
+
+    def _turn_camera(self, x: int, y: int, pyautogui: Any) -> None:
+        if self._mouse_mover is not None:
+            self._mouse_mover(x, y)
+        elif hasattr(ctypes, "windll"):
+            move_mouse_relative(x, y)
+        else:
+            pyautogui.moveRel(x, y, duration=0, _pause=False)
 
     def _auto_hit_once(self) -> bool:
         config = self.controls.get_config()

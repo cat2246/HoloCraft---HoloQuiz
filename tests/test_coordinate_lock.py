@@ -6,7 +6,9 @@ from holoquiz.coordinate_lock import (
     CoordinateLockWorker,
     PlayerDataClient,
     PlayerPosition,
+    camera_turn_pixels_for_target,
     movement_key_for_target,
+    heading_delta_for_target,
     nearest_enabled_lock,
 )
 from holoquiz.keyboard_coordinator import KeyboardInputCoordinator
@@ -51,6 +53,11 @@ class FakePyAutoGui:
         assert _pause is False
         self.events.append(("click", button))
 
+    def moveRel(self, x, y, duration=0, _pause=True):
+        assert duration == 0
+        assert _pause is False
+        self.events.append(("move", x, y))
+
 
 def test_player_data_client_reads_local_api_shape():
     def open_player(url, timeout):
@@ -88,6 +95,80 @@ def test_movement_key_uses_player_heading():
     assert movement_key_for_target(
         position, CoordinateLockConfig("east", 10, 64, 0)
     ) == "a"
+
+
+def test_heading_delta_uses_shortest_turn_toward_target():
+    lock = CoordinateLockConfig("west", -10, 64, 0)
+
+    assert heading_delta_for_target(PlayerPosition(0, 64, 0, heading=170), lock) == -80
+
+
+def test_camera_turn_adapts_to_angle_and_distance():
+    east = CoordinateLockConfig("east", 10, 64, 0)
+    slight = abs(camera_turn_pixels_for_target(
+        PlayerPosition(0, 64, 0, heading=-80), east
+    ))
+    large = abs(camera_turn_pixels_for_target(
+        PlayerPosition(0, 64, 0, heading=0), east
+    ))
+    close = abs(camera_turn_pixels_for_target(
+        PlayerPosition(9, 64, 0, heading=-80), east
+    ))
+
+    assert large > slight
+    assert large > 400
+    assert close > slight
+    assert camera_turn_pixels_for_target(
+        PlayerPosition(0, 64, 0, heading=-90), east
+    ) == 0
+    calibrated = abs(camera_turn_pixels_for_target(
+        PlayerPosition(0, 64, 0, heading=-80),
+        east,
+        mouse_counts_per_degree=128,
+    ))
+    assert abs(calibrated - slight * 2) <= 1
+
+
+def test_worker_learns_mouse_sensitivity_from_heading_feedback():
+    controls = RuntimeControls.from_config(BotConfig())
+    worker = CoordinateLockWorker(controls, queue.Queue())
+    worker._last_camera_command = 400
+    worker._last_camera_heading = 0
+
+    worker._update_camera_calibration(PlayerPosition(0, 64, 0, heading=20))
+
+    assert 16 < worker._mouse_counts_per_degree < 64
+
+
+def test_worker_looks_at_lock_and_moves_forward_when_enabled():
+    lock = CoordinateLockConfig("east", 10, 64, 0)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_look_at_enabled=True,
+            coordinate_locks=(lock,),
+        )
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0, heading=0)),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+        mouse_mover=lambda x, y: keys.events.append(("move", x, y)),
+        key_hold_seconds=0,
+    )
+
+    worker.check_once()
+
+    assert keys.events[0] == ("down", "w")
+    assert keys.events[-1] == ("up", "w")
+    movements = [event for event in keys.events if event[0] == "move"]
+    assert len(movements) > 4
+    assert sum(event[1] for event in movements) == camera_turn_pixels_for_target(
+        PlayerPosition(0, 64, 0, heading=0), lock
+    )
 
 
 def test_worker_ignores_holoquiz_dry_run_and_moves_toward_nearby_lock():

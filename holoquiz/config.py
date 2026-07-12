@@ -62,10 +62,12 @@ class BotConfig:
     screen_phrase_trigger_region: ScreenPhraseRegionConfig | None = None
     screen_phrase_result_region: ScreenPhraseRegionConfig | None = None
     screen_phrase_auto_send_result: bool = False
+    screen_phrase_source: str = "ocr"
     chat_trigger_dry_run: bool = True
     chat_triggers: tuple[ChatTriggerConfig, ...] = ()
     coordinate_lock_enabled: bool = False
     coordinate_lock_auto_hit_enabled: bool = False
+    coordinate_lock_look_at_enabled: bool = False
     coordinate_locks: tuple[CoordinateLockConfig, ...] = ()
     coordinate_lock_max_distance: float = 50.0
     coordinate_lock_tolerance: float = 0.75
@@ -163,6 +165,7 @@ def save_screen_phrase_settings(
     trigger_region: ScreenPhraseRegionConfig | None,
     result_region: ScreenPhraseRegionConfig | None,
     auto_send_result: bool,
+    source: str = "ocr",
 ) -> None:
     raw_config: dict[str, Any] = {}
     if path.exists():
@@ -174,6 +177,7 @@ def save_screen_phrase_settings(
     raw_config["screen_phrase_trigger_region"] = _region_to_json(trigger_region)
     raw_config["screen_phrase_result_region"] = _region_to_json(result_region)
     raw_config["screen_phrase_auto_send_result"] = auto_send_result
+    raw_config["screen_phrase_source"] = source
     path.write_text(
         json.dumps(raw_config, indent=2) + "\n",
         encoding="utf-8",
@@ -208,6 +212,7 @@ def save_coordinate_lock_settings(
     *,
     enabled: bool,
     auto_hit_enabled: bool = False,
+    look_at_enabled: bool = False,
 ) -> None:
     raw_config: dict[str, Any] = {}
     if path.exists():
@@ -217,6 +222,7 @@ def save_coordinate_lock_settings(
 
     raw_config["coordinate_lock_enabled"] = enabled
     raw_config["coordinate_lock_auto_hit_enabled"] = auto_hit_enabled
+    raw_config["coordinate_lock_look_at_enabled"] = look_at_enabled
     raw_config["coordinate_locks"] = [
         _coordinate_lock_to_json(lock) for lock in locks
     ]

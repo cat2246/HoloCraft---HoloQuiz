@@ -1,9 +1,55 @@
 from holoquiz.screen_phrase_watcher import (
+    SCREEN_PHRASE_SOURCE_TITLE_API,
     ScreenPhraseWatcher,
     ScreenPhraseCheckResult,
     ScreenReadRegion,
     TextMatchEvent,
+    TitleDataClient,
 )
+
+
+class FakeResponse:
+    def __init__(self, body: str):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self):
+        return self.body.encode()
+
+
+def test_title_api_uses_subtitle_as_trigger_and_title_as_result():
+    def fake_urlopen(url, timeout):
+        assert url == "http://127.0.0.1:8026/data/title"
+        assert timeout == 2.0
+        return FakeResponse('{"title":"42", "subtitle":"Good morning sir!"}')
+
+    watcher = ScreenPhraseWatcher(
+        lambda _region: "", TitleDataClient(urlopen_func=fake_urlopen)
+    )
+    watcher.set_source(SCREEN_PHRASE_SOURCE_TITLE_API)
+    watcher.set_trigger_phrase("Good morning sir")
+
+    event = watcher.check_once()
+    assert watcher.is_ready() is True
+    assert event is not None
+    assert event.trigger_text == "Good morning sir!"
+    assert event.result_text == "42"
+
+
+def test_title_api_health_uses_health_endpoint():
+    def fake_urlopen(url, timeout):
+        assert url == "http://127.0.0.1:8026/health"
+        return FakeResponse('{"status":"healthy"}')
+
+    watcher = ScreenPhraseWatcher(
+        lambda _region: "", TitleDataClient(urlopen_func=fake_urlopen)
+    )
+    assert watcher.check_api_health() == {"status": "healthy"}
 
 
 def test_screen_phrase_watcher_reads_result_area_after_trigger_phrase():

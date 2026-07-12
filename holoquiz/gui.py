@@ -37,6 +37,8 @@ from holoquiz.runtime import (
     SCREEN_PHRASE_WATCHER_FUNCTION,
 )
 from holoquiz.screen_phrase_watcher import (
+    SCREEN_PHRASE_SOURCE_OCR,
+    SCREEN_PHRASE_SOURCE_TITLE_API,
     ScreenPhraseWatcher,
     ScreenReadRegion,
     normalize_screen_text,
@@ -414,9 +416,14 @@ class ScreenPhraseWorker:
         try:
             result = self.watcher.check_once_detailed()
         except Exception as error:
+            hint = (
+                "Check the title API service at 127.0.0.1:8026."
+                if self.watcher.get_source() == SCREEN_PHRASE_SOURCE_TITLE_API
+                else "Install Tesseract OCR and keep Minecraft visible."
+            )
             message = (
                 "[screen-phrase-watcher-error] "
-                f"{error}. Install Tesseract OCR and keep Minecraft visible."
+                f"{error}. {hint}"
             )
             if message != self._last_error:
                 self.log_queue.put(message)
@@ -498,6 +505,10 @@ class ScreenPhraseWorker:
 
         self._last_auto_send_at = self._monotonic_seconds()
         self._send_result_to_chat(self._stable_result_text)
+        if self.watcher.get_source() == SCREEN_PHRASE_SOURCE_TITLE_API:
+            # A Title API send completes one stabilization sequence. Require five
+            # fresh one-second reads before the same title can be sent again.
+            self._reset_auto_send_stability()
 
     def _auto_send_in_cooldown(self) -> bool:
         if self._last_auto_send_at is None:
@@ -516,6 +527,9 @@ class ScreenPhraseWorker:
         return replace(self.controls.get_config(), dry_run=False)
 
     def _log_debug_result(self, result: object) -> None:
+        using_api = self.watcher.get_source() == SCREEN_PHRASE_SOURCE_TITLE_API
+        trigger_label = "subtitle" if using_api else "trigger OCR"
+        result_label = "title" if using_api else "result OCR"
         trigger_region = getattr(result, "trigger_region", None)
         result_region = getattr(result, "result_region", None)
         lines = [
@@ -525,7 +539,7 @@ class ScreenPhraseWorker:
             "[screen-phrase-watcher-debug] "
             f'trigger phrase: "{format_debug_text(getattr(result, "trigger_phrase", ""))}"',
             "[screen-phrase-watcher-debug] "
-            f'trigger OCR: "{format_debug_text(getattr(result, "trigger_text", ""))}"',
+            f'{trigger_label}: "{format_debug_text(getattr(result, "trigger_text", ""))}"',
             "[screen-phrase-watcher-debug] "
             f"trigger match: {'yes' if getattr(result, 'trigger_matched', False) else 'no'}",
         ]
@@ -533,7 +547,7 @@ class ScreenPhraseWorker:
         if result_text:
             lines.append(
                 "[screen-phrase-watcher-debug] "
-                f'result OCR: "{format_debug_text(result_text)}"'
+                f'{result_label}: "{format_debug_text(result_text)}"'
             )
         lines.append(
             "[screen-phrase-watcher-debug] "
@@ -639,6 +653,7 @@ class HoloQuizControlPanel:
                 self.controls.get_coordinate_locks(),
                 enabled=config.coordinate_lock_enabled,
                 auto_hit_enabled=config.coordinate_lock_auto_hit_enabled,
+                look_at_enabled=config.coordinate_lock_look_at_enabled,
             )
         self.controller = ControlPanelController(self.controls)
         self.log_queue: queue.Queue[str] = queue.Queue()
@@ -661,6 +676,8 @@ class HoloQuizControlPanel:
             value=config.screen_phrase_trigger
         )
         self.screen_phrase_status_var = tk.StringVar(value="")
+        self.screen_phrase_source_var = tk.StringVar(value=config.screen_phrase_source)
+        self.screen_phrase_api_status_var = tk.StringVar(value="")
         self.screen_phrase_debug_var = tk.BooleanVar(value=False)
         self.screen_phrase_auto_send_var = tk.BooleanVar(
             value=config.screen_phrase_auto_send_result
@@ -681,6 +698,9 @@ class HoloQuizControlPanel:
         )
         self.coordinate_lock_auto_hit_var = tk.BooleanVar(
             value=config.coordinate_lock_auto_hit_enabled
+        )
+        self.coordinate_lock_look_at_var = tk.BooleanVar(
+            value=config.coordinate_lock_look_at_enabled
         )
         self.coordinate_lock_name_var = tk.StringVar(value="")
         self.coordinate_lock_x_var = tk.StringVar(value="")
@@ -851,13 +871,31 @@ class HoloQuizControlPanel:
             pady=(10, 0),
         )
         screen_phrase_frame.columnconfigure(2, weight=1)
+        source_frame = ttk.Frame(screen_phrase_frame)
+        source_frame.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        ttk.Label(source_frame, text="Source:").grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            source_frame, text="Screen OCR", value=SCREEN_PHRASE_SOURCE_OCR,
+            variable=self.screen_phrase_source_var, command=self._on_screen_phrase_source_change,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Radiobutton(
+            source_frame, text="Title API", value=SCREEN_PHRASE_SOURCE_TITLE_API,
+            variable=self.screen_phrase_source_var, command=self._on_screen_phrase_source_change,
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
         ttk.Button(
+            source_frame, text="Check API status", command=self._check_title_api_health,
+        ).grid(row=0, column=3, sticky="w", padx=(12, 0))
+        ttk.Label(source_frame, textvariable=self.screen_phrase_api_status_var).grid(
+            row=0, column=4, sticky="w", padx=(8, 0)
+        )
+        self.screen_phrase_trigger_area_button = ttk.Button(
             screen_phrase_frame,
             text="Set trigger area",
             command=self._on_set_screen_phrase_trigger_area,
-        ).grid(row=0, column=0, sticky="w")
+        )
+        self.screen_phrase_trigger_area_button.grid(row=1, column=0, sticky="w")
         ttk.Label(screen_phrase_frame, text="Trigger phrase").grid(
-            row=0,
+            row=1,
             column=1,
             sticky="w",
             padx=(8, 4),
@@ -866,16 +904,18 @@ class HoloQuizControlPanel:
             screen_phrase_frame,
             textvariable=self.screen_phrase_trigger_var,
             width=34,
-        ).grid(row=0, column=2, sticky="ew")
-        ttk.Button(
+        ).grid(row=1, column=2, sticky="ew")
+        self.screen_phrase_result_area_button = ttk.Button(
             screen_phrase_frame,
             text="Set result area",
             command=self._on_set_screen_phrase_result_area,
-        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        )
+        self.screen_phrase_result_area_button.grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Label(
             screen_phrase_frame,
             textvariable=self.screen_phrase_status_var,
-        ).grid(row=1, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=(6, 0))
+        ).grid(row=2, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=(6, 0))
+        self._update_screen_phrase_source_ui()
 
         chat_trigger_frame = ttk.LabelFrame(outer, text="Chat Trigger", padding=10)
         chat_trigger_frame.grid(row=3, column=0, sticky="new", pady=(0, 10))
@@ -963,7 +1003,7 @@ class HoloQuizControlPanel:
 
         coordinate_lock_form = ttk.Frame(coordinate_lock_frame)
         coordinate_lock_form.grid(row=0, column=0, sticky="ew")
-        coordinate_lock_form.columnconfigure(13, weight=1)
+        coordinate_lock_form.columnconfigure(15, weight=1)
         ttk.Checkbutton(
             coordinate_lock_form,
             text="Enable coordinate lock",
@@ -976,23 +1016,29 @@ class HoloQuizControlPanel:
             variable=self.coordinate_lock_auto_hit_var,
             command=self._on_coordinate_lock_auto_hit_toggle,
         ).grid(row=0, column=1, sticky="w", padx=(0, 12))
+        ttk.Checkbutton(
+            coordinate_lock_form,
+            text="Look at lock",
+            variable=self.coordinate_lock_look_at_var,
+            command=self._on_coordinate_lock_look_at_toggle,
+        ).grid(row=0, column=2, sticky="w", padx=(0, 12))
         ttk.Label(coordinate_lock_form, text="Name").grid(
             row=0,
-            column=2,
+            column=3,
             sticky="w",
         )
         ttk.Entry(
             coordinate_lock_form,
             textvariable=self.coordinate_lock_name_var,
             width=16,
-        ).grid(row=0, column=3, sticky="w", padx=(4, 8))
+        ).grid(row=0, column=4, sticky="w", padx=(4, 8))
         for column, (label, variable) in enumerate(
             (
                 ("X", self.coordinate_lock_x_var),
                 ("Y", self.coordinate_lock_y_var),
                 ("Z", self.coordinate_lock_z_var),
             ),
-            start=3,
+            start=4,
         ):
             entry_column = column * 2
             ttk.Label(coordinate_lock_form, text=label).grid(
@@ -1009,16 +1055,16 @@ class HoloQuizControlPanel:
             coordinate_lock_form,
             text="Add coordinate",
             command=self._on_add_coordinate_lock,
-        ).grid(row=0, column=11, sticky="w", padx=(2, 6))
+        ).grid(row=0, column=13, sticky="w", padx=(2, 6))
         ttk.Button(
             coordinate_lock_form,
             text="Lock Here",
             command=self._on_lock_here,
-        ).grid(row=0, column=12, sticky="w")
+        ).grid(row=0, column=14, sticky="w")
         ttk.Label(
             coordinate_lock_form,
             textvariable=self.coordinate_lock_status_var,
-        ).grid(row=0, column=13, sticky="ew", padx=(8, 0))
+        ).grid(row=0, column=15, sticky="ew", padx=(8, 0))
 
         self.coordinate_lock_rows_frame = ttk.Frame(coordinate_lock_frame)
         self.coordinate_lock_rows_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
@@ -1108,6 +1154,37 @@ class HoloQuizControlPanel:
 
     def _on_screen_phrase_auto_send_change(self) -> None:
         self._save_screen_phrase_settings()
+
+    def _on_screen_phrase_source_change(self) -> None:
+        source = self.screen_phrase_source_var.get()
+        self.screen_phrase_watcher.set_source(source)
+        self._update_screen_phrase_source_ui()
+        self._save_screen_phrase_settings()
+        if source == SCREEN_PHRASE_SOURCE_TITLE_API:
+            self._check_title_api_health()
+
+    def _update_screen_phrase_source_ui(self) -> None:
+        state = (
+            "normal"
+            if self.screen_phrase_source_var.get() == SCREEN_PHRASE_SOURCE_OCR
+            else "disabled"
+        )
+        self.screen_phrase_trigger_area_button.configure(state=state)
+        self.screen_phrase_result_area_button.configure(state=state)
+
+    def _check_title_api_health(self) -> None:
+        self.screen_phrase_api_status_var.set("Checking...")
+
+        def check() -> None:
+            try:
+                health = self.screen_phrase_watcher.check_api_health()
+                value = health.get("status", health.get("healthy", "OK"))
+                message = f"API: {value}"
+            except Exception as error:
+                message = f"API unavailable: {error}"
+            self.root.after(0, lambda: self.screen_phrase_api_status_var.set(message))
+
+        threading.Thread(target=check, daemon=True).start()
 
     def _on_chat_trigger_dry_run_toggle(self) -> None:
         self.controls.set_chat_trigger_dry_run(self.chat_trigger_dry_run_var.get())
@@ -1332,6 +1409,12 @@ class HoloQuizControlPanel:
         )
         self._save_coordinate_lock_settings()
 
+    def _on_coordinate_lock_look_at_toggle(self) -> None:
+        self.controls.set_coordinate_lock_look_at_enabled(
+            self.coordinate_lock_look_at_var.get()
+        )
+        self._save_coordinate_lock_settings()
+
     def _on_add_coordinate_lock(self) -> None:
         result = self._build_coordinate_lock_from_form()
         if not result.ok or result.value is None:
@@ -1442,6 +1525,7 @@ class HoloQuizControlPanel:
             self.controls.get_coordinate_locks(),
             enabled=self.coordinate_lock_enabled_var.get(),
             auto_hit_enabled=self.coordinate_lock_auto_hit_var.get(),
+            look_at_enabled=self.coordinate_lock_look_at_var.get(),
         )
 
     def _chat_trigger_by_id(self, trigger_id: str | None) -> ChatTriggerConfig | None:
@@ -1453,6 +1537,7 @@ class HoloQuizControlPanel:
         return None
 
     def _load_screen_phrase_settings(self, config: BotConfig) -> None:
+        self.screen_phrase_watcher.set_source(config.screen_phrase_source)
         self.screen_phrase_watcher.set_trigger_phrase(config.screen_phrase_trigger)
         if config.screen_phrase_trigger_region is not None:
             region = region_config_to_screen_region(config.screen_phrase_trigger_region)
@@ -1478,6 +1563,7 @@ class HoloQuizControlPanel:
                 self.screen_phrase_watcher.get_result_region()
             ),
             auto_send_result=self.screen_phrase_auto_send_var.get(),
+            source=self.screen_phrase_source_var.get(),
         )
 
     def _select_screen_region(self, title: str) -> ScreenReadRegion | None:

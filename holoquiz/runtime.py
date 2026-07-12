@@ -43,6 +43,7 @@ class RuntimeSnapshot:
     chat_trigger_dry_run: bool
     coordinate_lock_enabled: bool
     coordinate_lock_auto_hit_enabled: bool
+    coordinate_lock_look_at_enabled: bool
     coordinate_locks: tuple[CoordinateLockConfig, ...]
 
 
@@ -69,6 +70,9 @@ class RuntimeControls:
         self._coordinate_lock_enabled = base_config.coordinate_lock_enabled
         self._coordinate_lock_auto_hit_enabled = (
             base_config.coordinate_lock_auto_hit_enabled
+        )
+        self._coordinate_lock_look_at_enabled = (
+            base_config.coordinate_lock_look_at_enabled
         )
         self._coordinate_locks = _only_first_coordinate_lock_enabled(
             base_config.coordinate_locks
@@ -102,6 +106,7 @@ class RuntimeControls:
                 chat_trigger_dry_run=self._chat_trigger_dry_run,
                 coordinate_lock_enabled=self._coordinate_lock_enabled,
                 coordinate_lock_auto_hit_enabled=self._coordinate_lock_auto_hit_enabled,
+                coordinate_lock_look_at_enabled=self._coordinate_lock_look_at_enabled,
                 coordinate_locks=tuple(self._coordinate_locks),
             )
 
@@ -120,6 +125,7 @@ class RuntimeControls:
                 chat_trigger_dry_run=self._chat_trigger_dry_run,
                 coordinate_lock_enabled=self._coordinate_lock_enabled,
                 coordinate_lock_auto_hit_enabled=self._coordinate_lock_auto_hit_enabled,
+                coordinate_lock_look_at_enabled=self._coordinate_lock_look_at_enabled,
                 coordinate_locks=tuple(self._coordinate_locks),
             )
 
@@ -208,6 +214,10 @@ class RuntimeControls:
     def set_coordinate_lock_auto_hit_enabled(self, enabled: bool) -> None:
         with self._lock:
             self._coordinate_lock_auto_hit_enabled = enabled
+
+    def set_coordinate_lock_look_at_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._coordinate_lock_look_at_enabled = enabled
 
     def get_coordinate_locks(self) -> tuple[CoordinateLockConfig, ...]:
         with self._lock:

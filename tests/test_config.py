@@ -43,11 +43,13 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "screen_phrase_trigger": "",
         "screen_phrase_trigger_region": None,
         "screen_phrase_result_region": None,
-        "screen_phrase_auto_send_result": False,
+            "screen_phrase_auto_send_result": False,
+            "screen_phrase_source": "ocr",
         "chat_trigger_dry_run": True,
         "chat_triggers": [],
         "coordinate_lock_enabled": False,
         "coordinate_lock_auto_hit_enabled": False,
+        "coordinate_lock_look_at_enabled": False,
         "coordinate_locks": [],
         "coordinate_lock_max_distance": 50.0,
         "coordinate_lock_tolerance": 0.75,
@@ -66,13 +68,14 @@ def test_load_and_save_coordinate_locks(tmp_path):
     ]
 
     save_coordinate_lock_settings(
-        config_path, locks, enabled=True, auto_hit_enabled=True
+        config_path, locks, enabled=True, auto_hit_enabled=True, look_at_enabled=True
     )
     config = load_config(config_path)
 
     assert config.dry_run is False
     assert config.coordinate_lock_enabled is True
     assert config.coordinate_lock_auto_hit_enabled is True
+    assert config.coordinate_lock_look_at_enabled is True
     assert config.coordinate_locks == tuple(locks)
 
 
