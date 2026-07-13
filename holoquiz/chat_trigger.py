@@ -4,6 +4,7 @@ import time
 from typing import Callable, Protocol
 
 from holoquiz.config import ChatTriggerConfig
+from holoquiz.sound_player import SoundPlayer, WindowsSoundPlayer
 
 
 class MacroSender(Protocol):
@@ -20,9 +21,11 @@ class ChatTriggerRunner:
         self,
         sender: MacroSender,
         clock: Callable[[], float] = time.monotonic,
+        sound_player: SoundPlayer | None = None,
     ) -> None:
         self.sender = sender
         self.clock = clock
+        self.sound_player = sound_player or WindowsSoundPlayer()
         self._last_triggered_at: dict[str, float] = {}
 
     def handle_line(
@@ -38,11 +41,22 @@ class ChatTriggerRunner:
                 continue
 
             self._last_triggered_at[trigger.id] = now
-            self.sender.send_macro(
-                trigger.macro,
-                typing_interval_seconds=trigger.typing_interval_seconds,
-            )
-            print(f"[chat-trigger] {trigger.trigger_phrase} -> {trigger.macro}")
+            actions: list[str] = []
+            if trigger.sound_path is not None:
+                try:
+                    self.sound_player.play(trigger.sound_path)
+                    actions.append(f"sound: {trigger.sound_path}")
+                except Exception as error:
+                    print(f"[sound-warning] Could not start chat trigger sound: {error}")
+
+            if trigger.macro.strip():
+                self.sender.send_macro(
+                    trigger.macro,
+                    typing_interval_seconds=trigger.typing_interval_seconds,
+                )
+                actions.append(trigger.macro)
+
+            print(f"[chat-trigger] {trigger.trigger_phrase} -> {' + '.join(actions)}")
 
     def _is_in_cooldown(self, trigger: ChatTriggerConfig, now: float) -> bool:
         last_triggered_at = self._last_triggered_at.get(trigger.id)

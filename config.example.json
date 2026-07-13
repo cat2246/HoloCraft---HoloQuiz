@@ -23,7 +23,17 @@
   "send_mode": "paste",
   "typing_interval_seconds": 0.01,
   "chat_trigger_dry_run": true,
-  "chat_triggers": [],
+  "chat_triggers": [
+    {
+      "id": "example-sound-trigger",
+      "trigger_phrase": "Good Morning!",
+      "macro": "",
+      "cooldown_seconds": 30.0,
+      "typing_interval_seconds": 0.05,
+      "enabled": false,
+      "sound_path": "C:\\Sounds\\morning.mp3"
+    }
+  ],
   "coordinate_lock_enabled": false,
   "coordinate_lock_auto_hit_enabled": false,
   "coordinate_lock_look_at_enabled": false,

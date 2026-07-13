@@ -23,6 +23,7 @@ class ChatTriggerConfig:
     cooldown_seconds: float
     typing_interval_seconds: float | None = None
     enabled: bool = True
+    sound_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -265,12 +266,17 @@ def _chat_triggers_from_json(value: Any) -> tuple[ChatTriggerConfig, ...]:
             ChatTriggerConfig(
                 id=str(raw_trigger["id"]),
                 trigger_phrase=str(raw_trigger["trigger_phrase"]),
-                macro=str(raw_trigger["macro"]),
+                macro=str(raw_trigger.get("macro", "")),
                 cooldown_seconds=float(raw_trigger.get("cooldown_seconds", 0.0)),
                 typing_interval_seconds=_optional_float(
                     raw_trigger.get("typing_interval_seconds")
                 ),
                 enabled=bool(raw_trigger.get("enabled", True)),
+                sound_path=(
+                    Path(raw_trigger["sound_path"])
+                    if raw_trigger.get("sound_path")
+                    else None
+                ),
             )
         )
     return tuple(triggers)
@@ -284,6 +290,7 @@ def _chat_trigger_to_json(trigger: ChatTriggerConfig) -> dict[str, Any]:
         "cooldown_seconds": trigger.cooldown_seconds,
         "typing_interval_seconds": trigger.typing_interval_seconds,
         "enabled": trigger.enabled,
+        "sound_path": str(trigger.sound_path) if trigger.sound_path else "",
     }
 
 

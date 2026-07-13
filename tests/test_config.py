@@ -292,6 +292,7 @@ def test_load_config_reads_chat_triggers(tmp_path):
                         "cooldown_seconds": 12.5,
                         "typing_interval_seconds": 0.08,
                         "enabled": True,
+                        "sound_path": "C:/Sounds/morning.mp3",
                     }
                 ]
             }
@@ -309,6 +310,7 @@ def test_load_config_reads_chat_triggers(tmp_path):
             cooldown_seconds=12.5,
             typing_interval_seconds=0.08,
             enabled=True,
+            sound_path=Path("C:/Sounds/morning.mp3"),
         ),
     )
 
@@ -330,6 +332,7 @@ def test_save_chat_triggers_settings_preserves_existing_config(tmp_path):
                 cooldown_seconds=12.5,
                 typing_interval_seconds=0.08,
                 enabled=False,
+                sound_path=Path("C:/Sounds/morning.wav"),
             )
         ],
         dry_run=False,
@@ -347,6 +350,7 @@ def test_save_chat_triggers_settings_preserves_existing_config(tmp_path):
             "cooldown_seconds": 12.5,
             "typing_interval_seconds": 0.08,
             "enabled": False,
+            "sound_path": "C:\\Sounds\\morning.wav",
         }
     ]
 
@@ -373,6 +377,30 @@ def test_load_config_keeps_missing_chat_trigger_typing_interval_as_fallback(tmp_
     config = load_config(config_path)
 
     assert config.chat_triggers[0].typing_interval_seconds is None
+    assert config.chat_triggers[0].sound_path is None
+
+
+def test_load_config_accepts_sound_only_chat_trigger(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "chat_triggers": [
+                    {
+                        "id": "alarm",
+                        "trigger_phrase": "Wake up!",
+                        "sound_path": "C:/Sounds/alarm.wav",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.chat_triggers[0].macro == ""
+    assert config.chat_triggers[0].sound_path == Path("C:/Sounds/alarm.wav")
 
 
 def test_load_config_reads_chat_trigger_dry_run(tmp_path):

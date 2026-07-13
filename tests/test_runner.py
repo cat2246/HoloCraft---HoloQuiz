@@ -31,6 +31,14 @@ class FakeSender:
         self.macros.append((macro, typing_interval_seconds))
 
 
+class FakeSoundPlayer:
+    def __init__(self):
+        self.paths = []
+
+    def play(self, sound_path):
+        self.paths.append(sound_path)
+
+
 class DebugAnswerService:
     last_debug_log = "[codex-cli] debug details"
 
@@ -423,3 +431,64 @@ def test_bot_passes_chat_trigger_typing_interval_to_macro_sender(tmp_path):
     bot.handle_line("[System] [CHAT] Good Morning!")
 
     assert sender.macros == [("tGood Morning{{Enter}}", 0.1)]
+
+
+def test_bot_plays_chat_trigger_sound_without_a_macro(tmp_path, capsys):
+    sender = FakeSender()
+    sound_player = FakeSoundPlayer()
+    sound_path = tmp_path / "alarm.mp3"
+    config = BotConfig(
+        chat_triggers=(
+            ChatTriggerConfig(
+                id="alarm",
+                trigger_phrase="Wake up!",
+                macro="",
+                cooldown_seconds=30.0,
+                sound_path=sound_path,
+            ),
+        )
+    )
+    bot = HoloQuizBot(
+        config=config,
+        memory=QuizMemory.load(tmp_path / "quiz_memory.json"),
+        answer_service=FakeAnswerService({}),
+        sender=sender,
+        clock=lambda: 100.0,
+        chat_trigger_sound_player=sound_player,
+    )
+
+    bot.handle_line("[System] [CHAT] Wake up!")
+
+    assert sound_player.paths == [sound_path]
+    assert sender.macros == []
+    assert f"sound: {sound_path}" in capsys.readouterr().out
+
+
+def test_bot_runs_both_chat_trigger_actions(tmp_path):
+    sender = FakeSender()
+    sound_player = FakeSoundPlayer()
+    sound_path = tmp_path / "greeting.wav"
+    config = BotConfig(
+        chat_triggers=(
+            ChatTriggerConfig(
+                id="greeting",
+                trigger_phrase="Hello!",
+                macro="tHello{{Enter}}",
+                cooldown_seconds=30.0,
+                sound_path=sound_path,
+            ),
+        )
+    )
+    bot = HoloQuizBot(
+        config=config,
+        memory=QuizMemory.load(tmp_path / "quiz_memory.json"),
+        answer_service=FakeAnswerService({}),
+        sender=sender,
+        clock=lambda: 100.0,
+        chat_trigger_sound_player=sound_player,
+    )
+
+    bot.handle_line("[System] [CHAT] Hello!")
+
+    assert sound_player.paths == [sound_path]
+    assert sender.macros == [("tHello{{Enter}}", None)]

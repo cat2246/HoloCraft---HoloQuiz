@@ -1,4 +1,5 @@
 import queue
+from types import SimpleNamespace
 
 import holoquiz.gui as gui
 from holoquiz.config import BotConfig
@@ -128,6 +129,38 @@ def test_control_panel_controller_rejects_reversed_send_delay_range():
     assert result.ok is False
     assert "less than or equal" in result.message
     assert controls.get_config().send_delay_seconds == 0.8
+
+
+def test_chat_trigger_form_requires_micro_or_sound():
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.chat_trigger_trigger_var = SimpleNamespace(get=lambda: "Wake up!")
+    panel.chat_trigger_macro_var = SimpleNamespace(get=lambda: "")
+    panel.chat_trigger_sound_var = SimpleNamespace(get=lambda: "")
+
+    result = panel._build_chat_trigger_from_form()
+
+    assert result.ok is False
+    assert result.message == "Micro or sound file is required."
+
+
+def test_chat_trigger_form_accepts_sound_without_micro(tmp_path):
+    sound_path = tmp_path / "alarm.mp3"
+    sound_path.write_bytes(b"audio fixture")
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.chat_trigger_trigger_var = SimpleNamespace(get=lambda: "Wake up!")
+    panel.chat_trigger_macro_var = SimpleNamespace(get=lambda: "")
+    panel.chat_trigger_sound_var = SimpleNamespace(get=lambda: str(sound_path))
+    panel.chat_trigger_cooldown_var = SimpleNamespace(get=lambda: "30")
+    panel.chat_trigger_typing_interval_var = SimpleNamespace(get=lambda: "0.05")
+    panel.chat_trigger_editing_id = None
+    panel.controls = RuntimeControls.from_config(BotConfig())
+
+    result = panel._build_chat_trigger_from_form()
+
+    assert result.ok is True
+    assert result.value is not None
+    assert result.value.macro == ""
+    assert result.value.sound_path == sound_path
 
 
 def test_screen_phrase_worker_debug_logs_ocr_details():

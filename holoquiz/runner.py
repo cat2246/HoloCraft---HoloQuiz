@@ -20,6 +20,7 @@ from holoquiz.parser import (
     parse_log_line,
 )
 from holoquiz.runtime import FIND_ANSWER_FUNCTION, RuntimeControls
+from holoquiz.sound_player import SoundPlayer
 
 
 class AnswerService(Protocol):
@@ -55,6 +56,7 @@ class HoloQuizBot:
         runtime_controls: RuntimeControls | None = None,
         before_live_answer_send: Callable[[], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        chat_trigger_sound_player: SoundPlayer | None = None,
     ) -> None:
         self.config = config
         self.runtime_controls = runtime_controls or RuntimeControls.from_config(config)
@@ -63,7 +65,11 @@ class HoloQuizBot:
         self.sender = sender
         self._before_live_answer_send = before_live_answer_send
         self.clock = clock
-        self.chat_trigger_runner = ChatTriggerRunner(sender, clock=clock)
+        self.chat_trigger_runner = ChatTriggerRunner(
+            sender,
+            clock=clock,
+            sound_player=chat_trigger_sound_player,
+        )
         self.pending_question: PendingQuestion | None = None
         self._last_question_times: dict[str, float] = {}
 

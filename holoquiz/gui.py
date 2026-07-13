@@ -9,7 +9,7 @@ import re
 import threading
 from time import monotonic
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 from typing import Any, Callable
 from urllib.parse import quote_plus
 from uuid import uuid4
@@ -43,6 +43,7 @@ from holoquiz.screen_phrase_watcher import (
     ScreenReadRegion,
     normalize_screen_text,
 )
+from holoquiz.sound_player import SUPPORTED_SOUND_EXTENSIONS
 
 
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
@@ -161,6 +162,15 @@ def ellipsize_text(text: str, max_chars: int) -> str:
     if max_chars <= 3:
         return "." * max_chars
     return f"{text[: max_chars - 3].rstrip()}..."
+
+
+def _chat_trigger_action_text(trigger: ChatTriggerConfig) -> str:
+    actions: list[str] = []
+    if trigger.macro:
+        actions.append(trigger.macro)
+    if trigger.sound_path:
+        actions.append(f"Sound: {trigger.sound_path.name}")
+    return " + ".join(actions)
 
 
 class QueueLogWriter:
@@ -684,6 +694,7 @@ class HoloQuizControlPanel:
         )
         self.chat_trigger_trigger_var = tk.StringVar(value="")
         self.chat_trigger_macro_var = tk.StringVar(value="")
+        self.chat_trigger_sound_var = tk.StringVar(value="")
         self.chat_trigger_cooldown_var = tk.StringVar(value="30")
         self.chat_trigger_typing_interval_var = tk.StringVar(
             value=f"{config.typing_interval_seconds:g}"
@@ -954,7 +965,11 @@ class HoloQuizControlPanel:
             textvariable=self.chat_trigger_trigger_var,
             width=26,
         ).grid(row=0, column=1, sticky="ew", padx=(6, 10))
-        ttk.Label(chat_trigger_form, text="Micro").grid(row=0, column=2, sticky="w")
+        ttk.Label(chat_trigger_form, text="Micro (optional)").grid(
+            row=0,
+            column=2,
+            sticky="w",
+        )
         ttk.Entry(
             chat_trigger_form,
             textvariable=self.chat_trigger_macro_var,
@@ -986,6 +1001,33 @@ class HoloQuizControlPanel:
             command=self._on_create_or_update_chat_trigger,
         )
         self.chat_trigger_submit_button.grid(row=0, column=8, sticky="w")
+        ttk.Label(chat_trigger_form, text="Sound (optional)").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(6, 0),
+        )
+        ttk.Entry(
+            chat_trigger_form,
+            textvariable=self.chat_trigger_sound_var,
+        ).grid(
+            row=1,
+            column=1,
+            columnspan=5,
+            sticky="ew",
+            padx=(6, 10),
+            pady=(6, 0),
+        )
+        ttk.Button(
+            chat_trigger_form,
+            text="Browse...",
+            command=self._on_browse_chat_trigger_sound,
+        ).grid(row=1, column=6, sticky="w", pady=(6, 0))
+        ttk.Button(
+            chat_trigger_form,
+            text="Clear",
+            command=lambda: self.chat_trigger_sound_var.set(""),
+        ).grid(row=1, column=7, sticky="w", padx=(6, 0), pady=(6, 0))
 
         self.chat_trigger_rows_frame = ttk.Frame(chat_trigger_frame)
         self.chat_trigger_rows_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -1194,6 +1236,7 @@ class HoloQuizControlPanel:
         self.chat_trigger_editing_id = None
         self.chat_trigger_trigger_var.set("")
         self.chat_trigger_macro_var.set("")
+        self.chat_trigger_sound_var.set("")
         self.chat_trigger_cooldown_var.set("30")
         self.chat_trigger_typing_interval_var.set(
             f"{self.controls.get_config().typing_interval_seconds:g}"
@@ -1228,6 +1271,7 @@ class HoloQuizControlPanel:
         self.chat_trigger_editing_id = None
         self.chat_trigger_trigger_var.set("")
         self.chat_trigger_macro_var.set("")
+        self.chat_trigger_sound_var.set("")
         self.chat_trigger_cooldown_var.set("30")
         self.chat_trigger_typing_interval_var.set(
             f"{self.controls.get_config().typing_interval_seconds:g}"
@@ -1237,10 +1281,27 @@ class HoloQuizControlPanel:
     def _build_chat_trigger_from_form(self) -> ChatTriggerBuildResult:
         trigger_phrase = self.chat_trigger_trigger_var.get().strip()
         macro = self.chat_trigger_macro_var.get().strip()
+        sound_path_text = self.chat_trigger_sound_var.get().strip()
         if not trigger_phrase:
             return ChatTriggerBuildResult(False, message="Trigger Phase is required.")
-        if not macro:
-            return ChatTriggerBuildResult(False, message="Micro is required.")
+        if not macro and not sound_path_text:
+            return ChatTriggerBuildResult(
+                False,
+                message="Micro or sound file is required.",
+            )
+
+        sound_path = Path(sound_path_text) if sound_path_text else None
+        if sound_path is not None:
+            if sound_path.suffix.lower() not in SUPPORTED_SOUND_EXTENSIONS:
+                return ChatTriggerBuildResult(
+                    False,
+                    message="Sound file must be an MP3 or WAV.",
+                )
+            if not sound_path.is_file():
+                return ChatTriggerBuildResult(
+                    False,
+                    message="Sound file does not exist.",
+                )
 
         try:
             cooldown_seconds = float(self.chat_trigger_cooldown_var.get())
@@ -1276,8 +1337,22 @@ class HoloQuizControlPanel:
                 cooldown_seconds=cooldown_seconds,
                 typing_interval_seconds=typing_interval_seconds,
                 enabled=existing.enabled if existing is not None else True,
+                sound_path=sound_path,
             ),
         )
+
+    def _on_browse_chat_trigger_sound(self) -> None:
+        sound_path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Select chat trigger sound",
+            filetypes=(
+                ("Audio files", "*.mp3 *.wav"),
+                ("MP3 files", "*.mp3"),
+                ("WAV files", "*.wav"),
+            ),
+        )
+        if sound_path:
+            self.chat_trigger_sound_var.set(sound_path)
 
     def _on_chat_trigger_toggle(self, trigger_id: str) -> None:
         variable = self.chat_trigger_enabled_vars[trigger_id]
@@ -1296,6 +1371,9 @@ class HoloQuizControlPanel:
         self.chat_trigger_editing_id = trigger.id
         self.chat_trigger_trigger_var.set(trigger.trigger_phrase)
         self.chat_trigger_macro_var.set(trigger.macro)
+        self.chat_trigger_sound_var.set(
+            str(trigger.sound_path) if trigger.sound_path else ""
+        )
         self.chat_trigger_cooldown_var.set(f"{trigger.cooldown_seconds:g}")
         typing_interval_seconds = (
             self.controls.get_config().typing_interval_seconds
@@ -1348,7 +1426,7 @@ class HoloQuizControlPanel:
             ).grid(row=row, column=1, sticky="ew", padx=(4, 8))
             ttk.Label(
                 self.chat_trigger_rows_frame,
-                text=ellipsize_text(trigger.macro, 42),
+                text=ellipsize_text(_chat_trigger_action_text(trigger), 42),
             ).grid(row=row, column=2, sticky="ew", padx=(0, 8))
             ttk.Label(
                 self.chat_trigger_rows_frame,
