@@ -4,6 +4,7 @@ from collections import deque
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, replace
 from pathlib import Path
+import math
 import queue
 import re
 import threading
@@ -48,6 +49,16 @@ from holoquiz.sound_player import SUPPORTED_SOUND_EXTENSIONS
 
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
 APP_TITLE = "HoloCraft Tools"
+APP_SUBTITLE = "Minecraft automation control center"
+WINDOW_SIZE = "1040x720"
+WINDOW_MIN_SIZE = (840, 620)
+FEATURE_TAB_LABELS = (
+    "HoloQuiz",
+    "Screen Watcher",
+    "Chat Triggers",
+    "Coordinate Lock",
+    "Activity",
+)
 BROWSER_SEARCH_STATUS_MAX_CHARS = 58
 BLANK_MARKER_PATTERN = re.compile(r"(?<!\w)(?:-{4,}|\?{4,}|_{4,})(?!\w)")
 TRIGGER_SOUND_PATH = Path(__file__).with_name("assets") / "gura-wakeup-1.wav"
@@ -126,6 +137,30 @@ class ControlPanelController:
         return ControlResult(
             True,
             f"Send delay set to {min_seconds:g}-{max_seconds:g} seconds.",
+        )
+
+    def set_coordinate_lock_auto_hit_range(
+        self,
+        raw_min_value: str,
+        raw_max_value: str,
+    ) -> ControlResult:
+        try:
+            min_seconds = float(raw_min_value)
+            max_seconds = float(raw_max_value)
+        except ValueError:
+            return ControlResult(False, "Auto hit times must be numbers.")
+
+        try:
+            self.controls.set_coordinate_lock_auto_hit_range(
+                min_seconds,
+                max_seconds,
+            )
+        except ValueError as error:
+            return ControlResult(False, str(error))
+
+        return ControlResult(
+            True,
+            f"Auto hit interval set to {min_seconds:g}-{max_seconds:g} seconds.",
         )
 
     def open_browser_search(self) -> ControlResult:
@@ -663,6 +698,8 @@ class HoloQuizControlPanel:
                 self.controls.get_coordinate_locks(),
                 enabled=config.coordinate_lock_enabled,
                 auto_hit_enabled=config.coordinate_lock_auto_hit_enabled,
+                auto_hit_min_seconds=config.coordinate_lock_auto_hit_min_seconds,
+                auto_hit_max_seconds=config.coordinate_lock_auto_hit_max_seconds,
                 look_at_enabled=config.coordinate_lock_look_at_enabled,
             )
         self.controller = ControlPanelController(self.controls)
@@ -671,8 +708,8 @@ class HoloQuizControlPanel:
         self.screen_phrase_watcher = ScreenPhraseWatcher(OcrScreenTextReader())
 
         self.root.title(APP_TITLE)
-        self.root.geometry("920x880")
-        self.root.minsize(760, 700)
+        self.root.geometry(WINDOW_SIZE)
+        self.root.minsize(*WINDOW_MIN_SIZE)
 
         snapshot = self.controls.snapshot()
         self.program_var = tk.BooleanVar(value=snapshot.program_enabled)
@@ -710,6 +747,12 @@ class HoloQuizControlPanel:
         self.coordinate_lock_auto_hit_var = tk.BooleanVar(
             value=config.coordinate_lock_auto_hit_enabled
         )
+        self.coordinate_lock_auto_hit_min_var = tk.StringVar(
+            value=f"{config.coordinate_lock_auto_hit_min_seconds:g}"
+        )
+        self.coordinate_lock_auto_hit_max_var = tk.StringVar(
+            value=f"{config.coordinate_lock_auto_hit_max_seconds:g}"
+        )
         self.coordinate_lock_look_at_var = tk.BooleanVar(
             value=config.coordinate_lock_look_at_enabled
         )
@@ -717,10 +760,14 @@ class HoloQuizControlPanel:
         self.coordinate_lock_x_var = tk.StringVar(value="")
         self.coordinate_lock_y_var = tk.StringVar(value="")
         self.coordinate_lock_z_var = tk.StringVar(value="")
-        self.coordinate_lock_status_var = tk.StringVar(value="")
+        self.coordinate_lock_active_area_var = tk.StringVar(
+            value=f"{CoordinateLockConfig.active_area:g}"
+        )
+        self.coordinate_lock_editing_id: str | None = None
+        self.coordinate_lock_status_var = tk.StringVar(
+            value="Select a saved target or add a new coordinate."
+        )
         self.function_vars: dict[str, tk.BooleanVar] = {}
-        self.chat_trigger_enabled_vars: dict[str, tk.BooleanVar] = {}
-        self.coordinate_lock_enabled_vars: dict[str, tk.BooleanVar] = {}
         self.screen_phrase_trigger_var.trace_add(
             "write",
             lambda *_args: self._on_screen_phrase_trigger_change(),
@@ -752,43 +799,78 @@ class HoloQuizControlPanel:
         self._drain_logs()
 
     def _build_ui(self) -> None:
-        outer = ttk.Frame(self.root, padding=12)
+        self._configure_styles()
+        outer = ttk.Frame(self.root, padding=(16, 14, 16, 12))
         outer.grid(row=0, column=0, sticky="nsew")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(5, weight=1)
+        outer.rowconfigure(1, weight=1)
 
-        status_row = ttk.Frame(outer)
-        status_row.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        status_row = ttk.Frame(outer, style="Header.TFrame", padding=(14, 10))
+        status_row.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         status_row.columnconfigure(1, weight=1)
-        ttk.Label(status_row, text="Status:").grid(row=0, column=0, sticky="w")
-        ttk.Label(status_row, textvariable=self.status_var).grid(
+        ttk.Label(
+            status_row,
+            text=APP_TITLE,
+            style="HeaderTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            status_row,
+            text=APP_SUBTITLE,
+            style="HeaderSubtitle.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+        self.status_label = ttk.Label(
+            status_row, textvariable=self.status_var, style="Status.TLabel"
+        )
+        self.status_label.grid(
             row=0,
             column=1,
-            sticky="w",
-            padx=(6, 0),
+            rowspan=2,
+            sticky="e",
+            padx=(12, 18),
         )
+        ttk.Checkbutton(
+            status_row,
+            text="Program enabled",
+            variable=self.program_var,
+            command=self._on_program_toggle,
+        ).grid(row=0, column=2, rowspan=2, sticky="e", padx=(0, 14))
+        ttk.Checkbutton(
+            status_row,
+            text="Dry-run",
+            variable=self.dry_run_var,
+            command=self._on_dry_run_toggle,
+        ).grid(row=0, column=3, rowspan=2, sticky="e")
 
-        holoquiz_frame = ttk.LabelFrame(outer, text="HoloQuiz", padding=10)
-        holoquiz_frame.grid(row=1, column=0, sticky="new", pady=(0, 10))
+        self.notebook = ttk.Notebook(outer)
+        self.notebook.grid(row=1, column=0, sticky="nsew")
+        (
+            holoquiz_tab,
+            screen_tab,
+            chat_tab,
+            coordinate_tab,
+            activity_tab,
+        ) = (self._add_feature_tab(label) for label in FEATURE_TAB_LABELS)
+
+        holoquiz_frame = ttk.LabelFrame(
+            holoquiz_tab, text="Answer automation", padding=16
+        )
+        holoquiz_frame.grid(row=0, column=0, sticky="new")
         holoquiz_frame.columnconfigure(1, weight=1)
 
         controls_row = ttk.Frame(holoquiz_frame)
         controls_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         controls_row.columnconfigure(2, weight=1)
-        ttk.Checkbutton(
+        ttk.Label(
             controls_row,
-            text="Whole program",
-            variable=self.program_var,
-            command=self._on_program_toggle,
-        ).grid(row=0, column=0, sticky="w", padx=(0, 16))
-        ttk.Checkbutton(
-            controls_row,
-            text="Dry-run",
-            variable=self.dry_run_var,
-            command=self._on_dry_run_toggle,
-        ).grid(row=0, column=1, sticky="w", padx=(0, 16))
+            text=(
+                "Control quiz lookup and live chat delivery. Global switches remain "
+                "available in the header on every page."
+            ),
+            style="Muted.TLabel",
+            wraplength=720,
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
 
         delay_row = ttk.Frame(holoquiz_frame)
         delay_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
@@ -843,8 +925,10 @@ class HoloQuizControlPanel:
             width=BROWSER_SEARCH_STATUS_MAX_CHARS,
         ).grid(row=browser_row, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
 
-        trigger_phase_frame = ttk.LabelFrame(outer, text="Trigger Phase", padding=10)
-        trigger_phase_frame.grid(row=2, column=0, sticky="new", pady=(0, 10))
+        trigger_phase_frame = ttk.LabelFrame(
+            screen_tab, text="Screen phrase watcher", padding=16
+        )
+        trigger_phase_frame.grid(row=0, column=0, sticky="new")
         trigger_phase_frame.columnconfigure(0, weight=1)
 
         screen_phrase_function = function_definitions.get(SCREEN_PHRASE_WATCHER_FUNCTION)
@@ -928,9 +1012,12 @@ class HoloQuizControlPanel:
         ).grid(row=2, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=(6, 0))
         self._update_screen_phrase_source_ui()
 
-        chat_trigger_frame = ttk.LabelFrame(outer, text="Chat Trigger", padding=10)
-        chat_trigger_frame.grid(row=3, column=0, sticky="new", pady=(0, 10))
+        chat_trigger_frame = ttk.LabelFrame(
+            chat_tab, text="Chat trigger rules", padding=16
+        )
+        chat_trigger_frame.grid(row=0, column=0, sticky="nsew")
         chat_trigger_frame.columnconfigure(0, weight=1)
+        chat_trigger_frame.rowconfigure(2, weight=1)
 
         chat_trigger_action_row = ttk.Frame(chat_trigger_frame)
         chat_trigger_action_row.grid(row=0, column=0, sticky="ew", pady=(0, 8))
@@ -955,7 +1042,7 @@ class HoloQuizControlPanel:
         chat_trigger_form.grid(row=1, column=0, sticky="ew")
         chat_trigger_form.columnconfigure(1, weight=1)
         chat_trigger_form.columnconfigure(3, weight=1)
-        ttk.Label(chat_trigger_form, text="Trigger Phase").grid(
+        ttk.Label(chat_trigger_form, text="Trigger phrase").grid(
             row=0,
             column=0,
             sticky="w",
@@ -965,7 +1052,7 @@ class HoloQuizControlPanel:
             textvariable=self.chat_trigger_trigger_var,
             width=26,
         ).grid(row=0, column=1, sticky="ew", padx=(6, 10))
-        ttk.Label(chat_trigger_form, text="Micro (optional)").grid(
+        ttk.Label(chat_trigger_form, text="Macro (optional)").grid(
             row=0,
             column=2,
             sticky="w",
@@ -976,157 +1063,423 @@ class HoloQuizControlPanel:
             width=34,
         ).grid(row=0, column=3, sticky="ew", padx=(6, 10))
         ttk.Label(chat_trigger_form, text="Cooldown").grid(
-            row=0,
-            column=4,
+            row=1,
+            column=0,
             sticky="w",
+            pady=(8, 0),
         )
         ttk.Entry(
             chat_trigger_form,
             textvariable=self.chat_trigger_cooldown_var,
             width=8,
-        ).grid(row=0, column=5, sticky="w", padx=(6, 10))
+        ).grid(row=1, column=1, sticky="w", padx=(6, 10), pady=(8, 0))
         ttk.Label(chat_trigger_form, text="Typing interval").grid(
-            row=0,
-            column=6,
+            row=1,
+            column=2,
             sticky="w",
+            pady=(8, 0),
         )
         ttk.Entry(
             chat_trigger_form,
             textvariable=self.chat_trigger_typing_interval_var,
             width=8,
-        ).grid(row=0, column=7, sticky="w", padx=(6, 10))
+        ).grid(row=1, column=3, sticky="w", padx=(6, 10), pady=(8, 0))
         self.chat_trigger_submit_button = ttk.Button(
             chat_trigger_form,
             text="Create",
             command=self._on_create_or_update_chat_trigger,
         )
-        self.chat_trigger_submit_button.grid(row=0, column=8, sticky="w")
+        self.chat_trigger_submit_button.grid(row=0, column=4, sticky="w")
         ttk.Label(chat_trigger_form, text="Sound (optional)").grid(
-            row=1,
+            row=2,
             column=0,
             sticky="w",
-            pady=(6, 0),
+            pady=(8, 0),
         )
         ttk.Entry(
             chat_trigger_form,
             textvariable=self.chat_trigger_sound_var,
         ).grid(
-            row=1,
+            row=2,
             column=1,
-            columnspan=5,
+            columnspan=2,
             sticky="ew",
             padx=(6, 10),
-            pady=(6, 0),
+            pady=(8, 0),
         )
         ttk.Button(
             chat_trigger_form,
             text="Browse...",
             command=self._on_browse_chat_trigger_sound,
-        ).grid(row=1, column=6, sticky="w", pady=(6, 0))
+        ).grid(row=2, column=3, sticky="w", pady=(8, 0))
         ttk.Button(
             chat_trigger_form,
             text="Clear",
             command=lambda: self.chat_trigger_sound_var.set(""),
-        ).grid(row=1, column=7, sticky="w", padx=(6, 0), pady=(6, 0))
+        ).grid(row=2, column=4, sticky="w", padx=(6, 0), pady=(8, 0))
 
-        self.chat_trigger_rows_frame = ttk.Frame(chat_trigger_frame)
-        self.chat_trigger_rows_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        self.chat_trigger_rows_frame.columnconfigure(1, weight=1)
-        self.chat_trigger_rows_frame.columnconfigure(2, weight=1)
+        chat_trigger_list = ttk.Frame(chat_trigger_frame)
+        chat_trigger_list.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
+        chat_trigger_list.columnconfigure(0, weight=1)
+        chat_trigger_list.rowconfigure(0, weight=1)
+        self.chat_trigger_tree = ttk.Treeview(
+            chat_trigger_list,
+            columns=("status", "phrase", "action", "cooldown", "typing"),
+            show="headings",
+            selectmode="browse",
+            height=6,
+        )
+        for column, heading, width, stretch in (
+            ("status", "Status", 70, False),
+            ("phrase", "Trigger phrase", 180, True),
+            ("action", "Action", 220, True),
+            ("cooldown", "Cooldown", 80, False),
+            ("typing", "Typing", 80, False),
+        ):
+            self.chat_trigger_tree.heading(column, text=heading)
+            self.chat_trigger_tree.column(
+                column, width=width, minwidth=70, stretch=stretch
+            )
+        self.chat_trigger_tree.grid(row=0, column=0, sticky="nsew")
+        self.chat_trigger_tree.bind(
+            "<Double-1>", lambda _event: self._edit_selected_chat_trigger()
+        )
+        chat_trigger_scrollbar = ttk.Scrollbar(
+            chat_trigger_list,
+            orient="vertical",
+            command=self.chat_trigger_tree.yview,
+        )
+        chat_trigger_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.chat_trigger_tree.configure(yscrollcommand=chat_trigger_scrollbar.set)
+        chat_trigger_buttons = ttk.Frame(chat_trigger_list)
+        chat_trigger_buttons.grid(row=1, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(
+            chat_trigger_buttons,
+            text="Enable / disable",
+            command=self._toggle_selected_chat_trigger,
+        ).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(
+            chat_trigger_buttons,
+            text="Edit selected",
+            command=self._edit_selected_chat_trigger,
+        ).grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(
+            chat_trigger_buttons,
+            text="Delete selected",
+            command=self._delete_selected_chat_trigger,
+        ).grid(row=0, column=2)
         self._refresh_chat_trigger_rows()
 
         coordinate_lock_frame = ttk.LabelFrame(
-            outer,
-            text="Lock Coordinate",
-            padding=10,
+            coordinate_tab,
+            text="Coordinate lock targets",
+            padding=16,
         )
-        coordinate_lock_frame.grid(row=4, column=0, sticky="new", pady=(0, 10))
+        coordinate_lock_frame.grid(row=0, column=0, sticky="nsew")
         coordinate_lock_frame.columnconfigure(0, weight=1)
+        coordinate_lock_frame.rowconfigure(1, weight=1)
 
         coordinate_lock_form = ttk.Frame(coordinate_lock_frame)
         coordinate_lock_form.grid(row=0, column=0, sticky="ew")
-        coordinate_lock_form.columnconfigure(15, weight=1)
+        coordinate_lock_form.columnconfigure(0, weight=1)
+
+        behavior_row = ttk.Frame(coordinate_lock_form)
+        behavior_row.grid(row=0, column=0, sticky="ew")
+        behavior_row.columnconfigure(4, weight=1)
+        ttk.Label(
+            behavior_row,
+            text="Lock behavior",
+            style="SectionLabel.TLabel",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 18))
         ttk.Checkbutton(
-            coordinate_lock_form,
+            behavior_row,
             text="Enable coordinate lock",
             variable=self.coordinate_lock_enabled_var,
             command=self._on_coordinate_lock_master_toggle,
-        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ).grid(row=0, column=1, sticky="w", padx=(0, 18))
         ttk.Checkbutton(
-            coordinate_lock_form,
+            behavior_row,
             text="Auto Hit",
             variable=self.coordinate_lock_auto_hit_var,
             command=self._on_coordinate_lock_auto_hit_toggle,
-        ).grid(row=0, column=1, sticky="w", padx=(0, 12))
+        ).grid(row=0, column=2, sticky="w", padx=(0, 18))
         ttk.Checkbutton(
-            coordinate_lock_form,
+            behavior_row,
             text="Look at lock",
             variable=self.coordinate_lock_look_at_var,
             command=self._on_coordinate_lock_look_at_toggle,
-        ).grid(row=0, column=2, sticky="w", padx=(0, 12))
-        ttk.Label(coordinate_lock_form, text="Name").grid(
-            row=0,
-            column=3,
+        ).grid(row=0, column=3, sticky="w")
+        ttk.Label(
+            behavior_row,
+            text="Auto hit interval",
+            style="FieldLabel.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(12, 0))
+
+        auto_hit_interval_row = ttk.Frame(behavior_row)
+        auto_hit_interval_row.grid(
+            row=1,
+            column=1,
+            columnspan=3,
             sticky="w",
+            pady=(12, 0),
+        )
+        ttk.Label(auto_hit_interval_row, text="Min").grid(
+            row=0, column=0, sticky="w", padx=(0, 6)
         )
         ttk.Entry(
-            coordinate_lock_form,
-            textvariable=self.coordinate_lock_name_var,
-            width=16,
-        ).grid(row=0, column=4, sticky="w", padx=(4, 8))
+            auto_hit_interval_row,
+            textvariable=self.coordinate_lock_auto_hit_min_var,
+            width=7,
+        ).grid(row=0, column=1, sticky="w")
+        ttk.Label(auto_hit_interval_row, text="sec").grid(
+            row=0, column=2, sticky="w", padx=(6, 18)
+        )
+        ttk.Label(auto_hit_interval_row, text="Max").grid(
+            row=0, column=3, sticky="w", padx=(0, 6)
+        )
+        ttk.Entry(
+            auto_hit_interval_row,
+            textvariable=self.coordinate_lock_auto_hit_max_var,
+            width=7,
+        ).grid(row=0, column=4, sticky="w")
+        ttk.Label(auto_hit_interval_row, text="sec").grid(
+            row=0, column=5, sticky="w", padx=(6, 18)
+        )
+        ttk.Button(
+            auto_hit_interval_row,
+            text="Apply",
+            command=self._on_apply_coordinate_lock_auto_hit_range,
+        ).grid(row=0, column=6, sticky="w")
+
+        ttk.Separator(coordinate_lock_form, orient="horizontal").grid(
+            row=1, column=0, sticky="ew", pady=14
+        )
+
+        target_editor = ttk.Frame(coordinate_lock_form)
+        target_editor.grid(row=2, column=0, sticky="ew")
+        for column, weight in enumerate((3, 1, 1, 1, 1)):
+            target_editor.columnconfigure(column, weight=weight)
+
         for column, (label, variable) in enumerate(
             (
+                ("Target name", self.coordinate_lock_name_var),
                 ("X", self.coordinate_lock_x_var),
                 ("Y", self.coordinate_lock_y_var),
                 ("Z", self.coordinate_lock_z_var),
-            ),
-            start=4,
+                ("Active area", self.coordinate_lock_active_area_var),
+            )
         ):
-            entry_column = column * 2
-            ttk.Label(coordinate_lock_form, text=label).grid(
+            field = ttk.Frame(target_editor)
+            field.grid(
                 row=0,
-                column=entry_column - 1,
-                sticky="w",
+                column=column,
+                sticky="ew",
+                padx=(0, 12 if column < 4 else 16),
+            )
+            field.columnconfigure(0, weight=1)
+            ttk.Label(field, text=label, style="FieldLabel.TLabel").grid(
+                row=0, column=0, sticky="w", pady=(0, 5)
             )
             ttk.Entry(
-                coordinate_lock_form,
+                field,
                 textvariable=variable,
-                width=10,
-            ).grid(row=0, column=entry_column, sticky="w", padx=(4, 8))
-        ttk.Button(
-            coordinate_lock_form,
+                width=24 if column == 0 else 10,
+            ).grid(row=1, column=0, sticky="ew")
+
+        target_actions = ttk.Frame(target_editor)
+        target_actions.grid(row=0, column=5, sticky="se")
+        self.coordinate_lock_submit_button = ttk.Button(
+            target_actions,
             text="Add coordinate",
             command=self._on_add_coordinate_lock,
-        ).grid(row=0, column=13, sticky="w", padx=(2, 6))
+        )
+        self.coordinate_lock_submit_button.grid(row=0, column=0, padx=(0, 6))
         ttk.Button(
-            coordinate_lock_form,
-            text="Lock Here",
+            target_actions,
+            text="Use current position",
             command=self._on_lock_here,
-        ).grid(row=0, column=14, sticky="w")
-        ttk.Label(
-            coordinate_lock_form,
-            textvariable=self.coordinate_lock_status_var,
-        ).grid(row=0, column=15, sticky="ew", padx=(8, 0))
+        ).grid(row=0, column=1)
 
-        self.coordinate_lock_rows_frame = ttk.Frame(coordinate_lock_frame)
-        self.coordinate_lock_rows_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        self.coordinate_lock_rows_frame.columnconfigure(1, weight=1)
+        status_row = ttk.Frame(coordinate_lock_form)
+        status_row.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        ttk.Label(
+            status_row,
+            text="Status",
+            style="FieldLabel.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            status_row,
+            textvariable=self.coordinate_lock_status_var,
+            style="Muted.TLabel",
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        coordinate_lock_list = ttk.Frame(coordinate_lock_frame)
+        coordinate_lock_list.grid(row=1, column=0, sticky="nsew", pady=(18, 0))
+        coordinate_lock_list.columnconfigure(0, weight=1)
+        coordinate_lock_list.rowconfigure(1, weight=1)
+        ttk.Label(
+            coordinate_lock_list,
+            text="Saved targets",
+            style="SectionLabel.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        self.coordinate_lock_tree = ttk.Treeview(
+            coordinate_lock_list,
+            columns=("status", "name", "x", "y", "z", "active_area"),
+            show="headings",
+            selectmode="browse",
+            height=6,
+        )
+        for column, heading, width, stretch in (
+            ("status", "Status", 80, False),
+            ("name", "Name", 200, True),
+            ("x", "X", 100, True),
+            ("y", "Y", 100, True),
+            ("z", "Z", 100, True),
+            ("active_area", "Active area", 90, False),
+        ):
+            self.coordinate_lock_tree.heading(column, text=heading)
+            self.coordinate_lock_tree.column(
+                column, width=width, minwidth=70, stretch=stretch
+            )
+        self.coordinate_lock_tree.grid(row=1, column=0, sticky="nsew")
+        self.coordinate_lock_tree.bind(
+            "<Double-1>", lambda _event: self._edit_selected_coordinate_lock()
+        )
+        coordinate_lock_scrollbar = ttk.Scrollbar(
+            coordinate_lock_list,
+            orient="vertical",
+            command=self.coordinate_lock_tree.yview,
+        )
+        coordinate_lock_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.coordinate_lock_tree.configure(
+            yscrollcommand=coordinate_lock_scrollbar.set
+        )
+        self.coordinate_lock_tree.tag_configure("active", background="#eefbf3")
+        coordinate_lock_buttons = ttk.Frame(coordinate_lock_list)
+        coordinate_lock_buttons.grid(
+            row=2, column=0, columnspan=2, sticky="e", pady=(10, 0)
+        )
+        ttk.Button(
+            coordinate_lock_buttons,
+            text="Toggle active",
+            command=self._activate_selected_coordinate_lock,
+        ).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(
+            coordinate_lock_buttons,
+            text="Edit selected",
+            command=self._edit_selected_coordinate_lock,
+        ).grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(
+            coordinate_lock_buttons,
+            text="Delete target",
+            command=self._delete_selected_coordinate_lock,
+        ).grid(row=0, column=2)
         self._refresh_coordinate_lock_rows()
 
-        log_frame = ttk.LabelFrame(outer, text="Log", padding=8)
-        log_frame.grid(row=5, column=0, sticky="nsew")
-        outer.rowconfigure(5, weight=1)
+        log_frame = ttk.LabelFrame(activity_tab, text="Runtime log", padding=10)
+        log_frame.grid(row=0, column=0, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-        self.log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled")
-        self.log_text.grid(row=0, column=0, sticky="nsew")
+        log_frame.rowconfigure(1, weight=1)
+        log_toolbar = ttk.Frame(log_frame)
+        log_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        log_toolbar.columnconfigure(0, weight=1)
+        ttk.Label(
+            log_toolbar,
+            text="Bot, watcher, and automation messages appear here.",
+            style="Muted.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(log_toolbar, text="Clear log", command=self._clear_log).grid(
+            row=0, column=1, sticky="e"
+        )
+        self.log_text = tk.Text(
+            log_frame,
+            height=12,
+            wrap="word",
+            state="disabled",
+            background="#101828",
+            foreground="#e4e7ec",
+            insertbackground="#ffffff",
+            relief="flat",
+            padx=10,
+            pady=10,
+            font=("Consolas", 9),
+        )
+        self.log_text.grid(row=1, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(
             log_frame,
             orient="vertical",
             command=self.log_text.yview,
         )
-        scrollbar.grid(row=0, column=1, sticky="ns")
+        scrollbar.grid(row=1, column=1, sticky="ns")
         self.log_text.configure(yscrollcommand=scrollbar.set)
+
+    def _configure_styles(self) -> None:
+        style = ttk.Style(self.root)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+        self.root.configure(background="#f3f5f7")
+        style.configure("TFrame", background="#ffffff")
+        style.configure("TLabel", background="#ffffff", foreground="#344054")
+        style.configure("TCheckbutton", background="#ffffff")
+        style.configure("TRadiobutton", background="#ffffff")
+        style.configure("Header.TFrame", background="#ffffff")
+        style.configure(
+            "HeaderTitle.TLabel",
+            background="#ffffff",
+            foreground="#172033",
+            font=("Segoe UI Semibold", 15),
+        )
+        style.configure(
+            "HeaderSubtitle.TLabel",
+            background="#ffffff",
+            foreground="#667085",
+            font=("Segoe UI", 9),
+        )
+        style.configure(
+            "Status.TLabel",
+            background="#e8f5ee",
+            foreground="#176b3a",
+            padding=(10, 5),
+            font=("Segoe UI Semibold", 9),
+        )
+        style.configure(
+            "PausedStatus.TLabel",
+            background="#fff4e5",
+            foreground="#9a4d00",
+            padding=(10, 5),
+            font=("Segoe UI Semibold", 9),
+        )
+        style.configure(
+            "StoppedStatus.TLabel",
+            background="#feecec",
+            foreground="#b42318",
+            padding=(10, 5),
+            font=("Segoe UI Semibold", 9),
+        )
+        style.configure("Muted.TLabel", foreground="#667085")
+        style.configure(
+            "SectionLabel.TLabel",
+            foreground="#172033",
+            font=("Segoe UI Semibold", 10),
+        )
+        style.configure(
+            "FieldLabel.TLabel",
+            foreground="#475467",
+            font=("Segoe UI Semibold", 9),
+        )
+        style.configure("TLabelframe", background="#ffffff")
+        style.configure("TLabelframe.Label", font=("Segoe UI Semibold", 10))
+        style.configure("TNotebook", background="#f3f5f7", borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(14, 8), font=("Segoe UI", 9))
+        style.configure("Treeview", rowheight=28, font=("Segoe UI", 9))
+        style.configure("Treeview.Heading", font=("Segoe UI Semibold", 9))
+
+    def _add_feature_tab(self, label: str) -> ttk.Frame:
+        tab = ttk.Frame(self.notebook, padding=14)
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(0, weight=1)
+        self.notebook.add(tab, text=label)
+        return tab
 
     def _add_function_checkbutton(
         self,
@@ -1283,11 +1636,11 @@ class HoloQuizControlPanel:
         macro = self.chat_trigger_macro_var.get().strip()
         sound_path_text = self.chat_trigger_sound_var.get().strip()
         if not trigger_phrase:
-            return ChatTriggerBuildResult(False, message="Trigger Phase is required.")
+            return ChatTriggerBuildResult(False, message="Trigger phrase is required.")
         if not macro and not sound_path_text:
             return ChatTriggerBuildResult(
                 False,
-                message="Micro or sound file is required.",
+                message="Macro or sound file is required.",
             )
 
         sound_path = Path(sound_path_text) if sound_path_text else None
@@ -1355,9 +1708,10 @@ class HoloQuizControlPanel:
             self.chat_trigger_sound_var.set(sound_path)
 
     def _on_chat_trigger_toggle(self, trigger_id: str) -> None:
-        variable = self.chat_trigger_enabled_vars[trigger_id]
         triggers = [
-            replace(trigger, enabled=variable.get()) if trigger.id == trigger_id else trigger
+            replace(trigger, enabled=not trigger.enabled)
+            if trigger.id == trigger_id
+            else trigger
             for trigger in self.controls.get_chat_triggers()
         ]
         self.controls.set_chat_triggers(triggers)
@@ -1398,65 +1752,52 @@ class HoloQuizControlPanel:
         self.chat_trigger_status_var.set("Chat trigger deleted.")
 
     def _refresh_chat_trigger_rows(self) -> None:
-        for child in self.chat_trigger_rows_frame.winfo_children():
-            child.destroy()
-
-        self.chat_trigger_enabled_vars = {}
-        triggers = self.controls.get_chat_triggers()
-        if not triggers:
-            ttk.Label(
-                self.chat_trigger_rows_frame,
-                text="No chat triggers created.",
-            ).grid(row=0, column=0, sticky="w")
-            return
-
-        for row, trigger in enumerate(triggers):
-            enabled_var = tk.BooleanVar(value=trigger.enabled)
-            self.chat_trigger_enabled_vars[trigger.id] = enabled_var
-            ttk.Checkbutton(
-                self.chat_trigger_rows_frame,
-                variable=enabled_var,
-                command=lambda trigger_id=trigger.id: self._on_chat_trigger_toggle(
-                    trigger_id
-                ),
-            ).grid(row=row, column=0, sticky="w")
-            ttk.Label(
-                self.chat_trigger_rows_frame,
-                text=ellipsize_text(trigger.trigger_phrase, 38),
-            ).grid(row=row, column=1, sticky="ew", padx=(4, 8))
-            ttk.Label(
-                self.chat_trigger_rows_frame,
-                text=ellipsize_text(_chat_trigger_action_text(trigger), 42),
-            ).grid(row=row, column=2, sticky="ew", padx=(0, 8))
-            ttk.Label(
-                self.chat_trigger_rows_frame,
-                text=f"{trigger.cooldown_seconds:g}s",
-                width=8,
-            ).grid(row=row, column=3, sticky="w", padx=(0, 8))
+        selection = self.chat_trigger_tree.selection()
+        selected_id = selection[0] if selection else None
+        for item_id in self.chat_trigger_tree.get_children():
+            self.chat_trigger_tree.delete(item_id)
+        for trigger in self.controls.get_chat_triggers():
             typing_interval_seconds = (
                 self.controls.get_config().typing_interval_seconds
                 if trigger.typing_interval_seconds is None
                 else trigger.typing_interval_seconds
             )
-            ttk.Label(
-                self.chat_trigger_rows_frame,
-                text=f"{typing_interval_seconds:g}s/key",
-                width=9,
-            ).grid(row=row, column=4, sticky="w", padx=(0, 8))
-            ttk.Button(
-                self.chat_trigger_rows_frame,
-                text="Edit",
-                command=lambda trigger_id=trigger.id: self._on_edit_chat_trigger(
-                    trigger_id
+            self.chat_trigger_tree.insert(
+                "",
+                "end",
+                iid=trigger.id,
+                values=(
+                    "Enabled" if trigger.enabled else "Disabled",
+                    trigger.trigger_phrase,
+                    _chat_trigger_action_text(trigger),
+                    f"{trigger.cooldown_seconds:g}s",
+                    f"{typing_interval_seconds:g}s/key",
                 ),
-            ).grid(row=row, column=5, sticky="w", padx=(0, 6))
-            ttk.Button(
-                self.chat_trigger_rows_frame,
-                text="Delete",
-                command=lambda trigger_id=trigger.id: self._on_delete_chat_trigger(
-                    trigger_id
-                ),
-            ).grid(row=row, column=6, sticky="w")
+            )
+        if selected_id and self.chat_trigger_tree.exists(selected_id):
+            self.chat_trigger_tree.selection_set(selected_id)
+
+    def _selected_chat_trigger_id(self) -> str | None:
+        selection = self.chat_trigger_tree.selection()
+        if not selection:
+            self.chat_trigger_status_var.set("Select a chat trigger first.")
+            return None
+        return selection[0]
+
+    def _toggle_selected_chat_trigger(self) -> None:
+        trigger_id = self._selected_chat_trigger_id()
+        if trigger_id is not None:
+            self._on_chat_trigger_toggle(trigger_id)
+
+    def _edit_selected_chat_trigger(self) -> None:
+        trigger_id = self._selected_chat_trigger_id()
+        if trigger_id is not None:
+            self._on_edit_chat_trigger(trigger_id)
+
+    def _delete_selected_chat_trigger(self) -> None:
+        trigger_id = self._selected_chat_trigger_id()
+        if trigger_id is not None:
+            self._on_delete_chat_trigger(trigger_id)
 
     def _save_chat_triggers_settings(self) -> None:
         save_chat_triggers_settings(
@@ -1487,6 +1828,22 @@ class HoloQuizControlPanel:
         )
         self._save_coordinate_lock_settings()
 
+    def _on_apply_coordinate_lock_auto_hit_range(self) -> None:
+        result = self.controller.set_coordinate_lock_auto_hit_range(
+            self.coordinate_lock_auto_hit_min_var.get(),
+            self.coordinate_lock_auto_hit_max_var.get(),
+        )
+        self.coordinate_lock_status_var.set(result.message)
+        if result.ok:
+            config = self.controls.get_config()
+            self.coordinate_lock_auto_hit_min_var.set(
+                f"{config.coordinate_lock_auto_hit_min_seconds:g}"
+            )
+            self.coordinate_lock_auto_hit_max_var.set(
+                f"{config.coordinate_lock_auto_hit_max_seconds:g}"
+            )
+            self._save_coordinate_lock_settings()
+
     def _on_coordinate_lock_look_at_toggle(self) -> None:
         self.controls.set_coordinate_lock_look_at_enabled(
             self.coordinate_lock_look_at_var.get()
@@ -1498,19 +1855,33 @@ class HoloQuizControlPanel:
         if not result.ok or result.value is None:
             self.coordinate_lock_status_var.set(result.message)
             return
-        locks = [
-            replace(lock, enabled=False)
-            for lock in self.controls.get_coordinate_locks()
-        ]
-        locks.append(result.value)
+        locks = list(self.controls.get_coordinate_locks())
+        if self.coordinate_lock_editing_id is None:
+            locks = [replace(lock, enabled=False) for lock in locks]
+            locks.append(result.value)
+            message = "Coordinate added."
+        else:
+            locks = [
+                result.value if lock.id == self.coordinate_lock_editing_id else lock
+                for lock in locks
+            ]
+            message = "Coordinate updated."
         self.controls.set_coordinate_locks(locks)
         self._save_coordinate_lock_settings()
         self._refresh_coordinate_lock_rows()
-        self.coordinate_lock_status_var.set("Coordinate added.")
+        self._clear_coordinate_lock_form()
+        self.coordinate_lock_status_var.set(message)
+
+    def _clear_coordinate_lock_form(self) -> None:
+        self.coordinate_lock_editing_id = None
         self.coordinate_lock_name_var.set("")
         self.coordinate_lock_x_var.set("")
         self.coordinate_lock_y_var.set("")
         self.coordinate_lock_z_var.set("")
+        self.coordinate_lock_active_area_var.set(
+            f"{CoordinateLockConfig.active_area:g}"
+        )
+        self.coordinate_lock_submit_button.configure(text="Add coordinate")
 
     def _build_coordinate_lock_from_form(self) -> CoordinateLockBuildResult:
         name = self.coordinate_lock_name_var.get().strip()
@@ -1520,12 +1891,53 @@ class HoloQuizControlPanel:
             x = float(self.coordinate_lock_x_var.get().strip())
             y = float(self.coordinate_lock_y_var.get().strip())
             z = float(self.coordinate_lock_z_var.get().strip())
+            active_area = float(self.coordinate_lock_active_area_var.get().strip())
         except ValueError:
-            return CoordinateLockBuildResult(False, "X, Y, and Z must be numbers.")
+            return CoordinateLockBuildResult(
+                False, "X, Y, Z, and active area must be numbers."
+            )
+        if not math.isfinite(active_area) or active_area <= 0:
+            return CoordinateLockBuildResult(
+                False, "Active area must be greater than 0."
+            )
+        existing = self._coordinate_lock_by_id(self.coordinate_lock_editing_id)
         return CoordinateLockBuildResult(
             True,
-            value=CoordinateLockConfig(id=uuid4().hex, x=x, y=y, z=z, name=name),
+            value=CoordinateLockConfig(
+                id=existing.id if existing is not None else uuid4().hex,
+                x=x,
+                y=y,
+                z=z,
+                enabled=existing.enabled if existing is not None else True,
+                name=name,
+                active_area=active_area,
+            ),
         )
+
+    def _coordinate_lock_by_id(
+        self, lock_id: str | None
+    ) -> CoordinateLockConfig | None:
+        return next(
+            (
+                lock
+                for lock in self.controls.get_coordinate_locks()
+                if lock.id == lock_id
+            ),
+            None,
+        )
+
+    def _on_edit_coordinate_lock(self, lock_id: str) -> None:
+        lock = self._coordinate_lock_by_id(lock_id)
+        if lock is None:
+            return
+        self.coordinate_lock_editing_id = lock.id
+        self.coordinate_lock_name_var.set(lock.name)
+        self.coordinate_lock_x_var.set(f"{lock.x:g}")
+        self.coordinate_lock_y_var.set(f"{lock.y:g}")
+        self.coordinate_lock_z_var.set(f"{lock.z:g}")
+        self.coordinate_lock_active_area_var.set(f"{lock.active_area:g}")
+        self.coordinate_lock_submit_button.configure(text="Save coordinate")
+        self.coordinate_lock_status_var.set("Editing coordinate.")
 
     def _on_lock_here(self) -> None:
         self.coordinate_lock_status_var.set("Reading player position...")
@@ -1543,7 +1955,13 @@ class HoloQuizControlPanel:
         self.coordinate_lock_status_var.set("Current position loaded; click Add coordinate.")
 
     def _on_coordinate_lock_toggle(self, lock_id: str) -> None:
-        enabled = self.coordinate_lock_enabled_vars[lock_id].get()
+        selected = next(
+            (lock for lock in self.controls.get_coordinate_locks() if lock.id == lock_id),
+            None,
+        )
+        if selected is None:
+            return
+        enabled = not selected.enabled
         locks = [
             replace(lock, enabled=(enabled if lock.id == lock_id else False))
             for lock in self.controls.get_coordinate_locks()
@@ -1559,43 +1977,54 @@ class HoloQuizControlPanel:
         self.controls.set_coordinate_locks(locks)
         self._save_coordinate_lock_settings()
         self._refresh_coordinate_lock_rows()
+        if self.coordinate_lock_editing_id == lock_id:
+            self._clear_coordinate_lock_form()
         self.coordinate_lock_status_var.set("Coordinate deleted.")
 
     def _refresh_coordinate_lock_rows(self) -> None:
-        for child in self.coordinate_lock_rows_frame.winfo_children():
-            child.destroy()
-        self.coordinate_lock_enabled_vars = {}
-        locks = self.controls.get_coordinate_locks()
-        if not locks:
-            ttk.Label(
-                self.coordinate_lock_rows_frame,
-                text="No lock coordinates added.",
-            ).grid(row=0, column=0, sticky="w")
-            return
-        for row, lock in enumerate(locks):
-            enabled_var = tk.BooleanVar(value=lock.enabled)
-            self.coordinate_lock_enabled_vars[lock.id] = enabled_var
-            ttk.Checkbutton(
-                self.coordinate_lock_rows_frame,
-                variable=enabled_var,
-                command=lambda lock_id=lock.id: self._on_coordinate_lock_toggle(
-                    lock_id
+        selection = self.coordinate_lock_tree.selection()
+        selected_id = selection[0] if selection else None
+        for item_id in self.coordinate_lock_tree.get_children():
+            self.coordinate_lock_tree.delete(item_id)
+        for lock in self.controls.get_coordinate_locks():
+            self.coordinate_lock_tree.insert(
+                "",
+                "end",
+                iid=lock.id,
+                values=(
+                    "Active" if lock.enabled else "Inactive",
+                    lock.name or "Unnamed coordinate",
+                    f"{lock.x:g}",
+                    f"{lock.y:g}",
+                    f"{lock.z:g}",
+                    f"{lock.active_area:g}",
                 ),
-            ).grid(row=row, column=0, sticky="w")
-            ttk.Label(
-                self.coordinate_lock_rows_frame,
-                text=(
-                    f"{lock.name or 'Unnamed coordinate'}: "
-                    f"X {lock.x:g}    Y {lock.y:g}    Z {lock.z:g}"
-                ),
-            ).grid(row=row, column=1, sticky="w", padx=(4, 8))
-            ttk.Button(
-                self.coordinate_lock_rows_frame,
-                text="Delete",
-                command=lambda lock_id=lock.id: self._on_delete_coordinate_lock(
-                    lock_id
-                ),
-            ).grid(row=row, column=2, sticky="w")
+                tags=("active",) if lock.enabled else (),
+            )
+        if selected_id and self.coordinate_lock_tree.exists(selected_id):
+            self.coordinate_lock_tree.selection_set(selected_id)
+
+    def _selected_coordinate_lock_id(self) -> str | None:
+        selection = self.coordinate_lock_tree.selection()
+        if not selection:
+            self.coordinate_lock_status_var.set("Select a coordinate first.")
+            return None
+        return selection[0]
+
+    def _activate_selected_coordinate_lock(self) -> None:
+        lock_id = self._selected_coordinate_lock_id()
+        if lock_id is not None:
+            self._on_coordinate_lock_toggle(lock_id)
+
+    def _edit_selected_coordinate_lock(self) -> None:
+        lock_id = self._selected_coordinate_lock_id()
+        if lock_id is not None:
+            self._on_edit_coordinate_lock(lock_id)
+
+    def _delete_selected_coordinate_lock(self) -> None:
+        lock_id = self._selected_coordinate_lock_id()
+        if lock_id is not None:
+            self._on_delete_coordinate_lock(lock_id)
 
     def _save_coordinate_lock_settings(self) -> None:
         save_coordinate_lock_settings(
@@ -1603,6 +2032,12 @@ class HoloQuizControlPanel:
             self.controls.get_coordinate_locks(),
             enabled=self.coordinate_lock_enabled_var.get(),
             auto_hit_enabled=self.coordinate_lock_auto_hit_var.get(),
+            auto_hit_min_seconds=(
+                self.controls.get_config().coordinate_lock_auto_hit_min_seconds
+            ),
+            auto_hit_max_seconds=(
+                self.controls.get_config().coordinate_lock_auto_hit_max_seconds
+            ),
             look_at_enabled=self.coordinate_lock_look_at_var.get(),
         )
 
@@ -1660,8 +2095,15 @@ class HoloQuizControlPanel:
     def _update_status_text(self) -> None:
         snapshot = self.controls.snapshot()
         program = "Running" if snapshot.program_enabled else "Paused"
-        worker = "worker active" if self.worker.is_running() else "worker stopped"
+        worker_running = self.worker.is_running()
+        worker = "worker active" if worker_running else "worker stopped"
         self.status_var.set(f"{program}, {worker}")
+        if not worker_running:
+            self.status_label.configure(style="StoppedStatus.TLabel")
+        elif not snapshot.program_enabled:
+            self.status_label.configure(style="PausedStatus.TLabel")
+        else:
+            self.status_label.configure(style="Status.TLabel")
 
     def _drain_logs(self) -> None:
         while True:
@@ -1676,6 +2118,11 @@ class HoloQuizControlPanel:
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"{line}\n")
         self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
+    def _clear_log(self) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
 
     def close(self) -> None:

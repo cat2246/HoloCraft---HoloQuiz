@@ -76,11 +76,16 @@ def test_runtime_controls_track_coordinate_lock_settings():
 
     controls.set_coordinate_lock_enabled(True)
     controls.set_coordinate_lock_auto_hit_enabled(True)
+    controls.set_coordinate_lock_auto_hit_range(0.1, 0.5)
     controls.set_coordinate_lock_look_at_enabled(True)
     controls.set_coordinate_locks([lock])
 
     assert controls.get_config().coordinate_lock_enabled is True
     assert controls.get_config().coordinate_lock_auto_hit_enabled is True
+    assert controls.get_config().coordinate_lock_auto_hit_min_seconds == 0.1
+    assert controls.get_config().coordinate_lock_auto_hit_max_seconds == 0.5
+    assert controls.snapshot().coordinate_lock_auto_hit_min_seconds == 0.1
+    assert controls.snapshot().coordinate_lock_auto_hit_max_seconds == 0.5
     assert controls.get_config().coordinate_lock_look_at_enabled is True
     assert controls.get_coordinate_locks() == (lock,)
     assert controls.snapshot().coordinate_locks == (lock,)
@@ -98,6 +103,18 @@ def test_runtime_controls_allow_only_one_enabled_coordinate_lock():
         first,
         CoordinateLockConfig("second", 4, 5, 6, enabled=False),
     )
+
+
+def test_runtime_controls_reject_invalid_auto_hit_range():
+    controls = RuntimeControls.from_config(BotConfig())
+
+    for min_seconds, max_seconds in ((0.0, 0.5), (0.5, 0.1)):
+        try:
+            controls.set_coordinate_lock_auto_hit_range(min_seconds, max_seconds)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Expected invalid auto hit range to raise ValueError")
 
 
 def test_runtime_controls_reject_invalid_delay_range():

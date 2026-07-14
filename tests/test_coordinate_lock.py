@@ -7,6 +7,7 @@ from holoquiz.coordinate_lock import (
     CoordinateLockWorker,
     PlayerDataClient,
     PlayerPosition,
+    auto_hit_delay_seconds,
     camera_turn_pixels_for_target,
     movement_key_for_target,
     heading_delta_for_target,
@@ -28,6 +29,22 @@ class FakeResponse:
 
     def read(self):
         return json.dumps(self.payload).encode("utf-8")
+
+
+def test_auto_hit_delay_uses_configured_range():
+    requested_ranges = []
+    config = BotConfig(
+        coordinate_lock_auto_hit_min_seconds=0.1,
+        coordinate_lock_auto_hit_max_seconds=0.5,
+    )
+
+    delay = auto_hit_delay_seconds(
+        config,
+        lambda minimum, maximum: requested_ranges.append((minimum, maximum)) or 0.3,
+    )
+
+    assert delay == 0.3
+    assert requested_ranges == [(0.1, 0.5)]
 
 
 class FakePlayerClient:
@@ -251,8 +268,8 @@ def test_worker_releases_pressed_keys_when_an_input_fails():
     assert keys.events == [("down", "w"), ("up", "w")]
 
 
-def test_worker_stops_when_nearest_lock_is_over_fifty_blocks_away():
-    lock = CoordinateLockConfig("far", 51, 64, 0)
+def test_worker_stops_when_target_is_outside_its_active_area():
+    lock = CoordinateLockConfig("far", 21, 64, 0, active_area=20)
     controls = RuntimeControls.from_config(
         BotConfig(
             dry_run=False,
@@ -275,7 +292,30 @@ def test_worker_stops_when_nearest_lock_is_over_fifty_blocks_away():
     worker.check_once()
 
     assert keys.events == []
-    assert "movement stopped" in logs.get_nowait()
+    message = logs.get_nowait()
+    assert "outside its 20-block active area" in message
+    assert "movement stopped" in message
+
+
+def test_worker_moves_when_target_is_inside_its_custom_active_area():
+    lock = CoordinateLockConfig("far", 51, 64, 0, active_area=60)
+    controls = RuntimeControls.from_config(
+        BotConfig(coordinate_lock_enabled=True, coordinate_locks=(lock,))
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+        key_hold_seconds=0,
+    )
+
+    worker.check_once()
+
+    assert keys.events == [("down", "a"), ("up", "a")]
 
 
 def test_worker_waits_until_minecraft_is_foreground():

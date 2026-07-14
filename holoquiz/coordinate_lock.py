@@ -99,6 +99,17 @@ def nearest_enabled_lock(
     return min(candidates, key=lambda candidate: candidate[1], default=None)
 
 
+def auto_hit_delay_seconds(
+    config: BotConfig,
+    random_uniform: Callable[[float, float], float] | None = None,
+) -> float:
+    choose_delay = random_uniform or random.uniform
+    return choose_delay(
+        config.coordinate_lock_auto_hit_min_seconds,
+        config.coordinate_lock_auto_hit_max_seconds,
+    )
+
+
 def movement_key_for_target(
     position: PlayerPosition,
     lock: CoordinateLockConfig,
@@ -255,7 +266,11 @@ class CoordinateLockWorker:
             except Exception as error:
                 self._status(f"[coordinate-lock-auto-hit-error] {error}")
                 clicked = False
-            delay = random.uniform(0.3, 0.8) if clicked else 0.01
+            delay = (
+                auto_hit_delay_seconds(self.controls.get_config())
+                if clicked
+                else 0.01
+            )
             self._stop_event.wait(delay)
 
     def _should_check(self) -> bool:
@@ -291,11 +306,12 @@ class CoordinateLockWorker:
                 self._auto_hit_in_range.clear()
                 return
             lock, distance = nearest
-            if distance > config.coordinate_lock_max_distance:
+            if distance > lock.active_area:
                 self._auto_hit_in_range.clear()
                 self._status(
-                    "[coordinate-lock] Player is "
-                    f"{distance:.1f} blocks from the nearest lock; movement stopped."
+                    f"[coordinate-lock] Player is {distance:.1f} blocks from "
+                    f"{lock.name or lock.id}, outside its {lock.active_area:g}-block "
+                    "active area; movement stopped."
                 )
                 return
             if config.coordinate_lock_auto_hit_enabled:

@@ -2,7 +2,7 @@ import queue
 from types import SimpleNamespace
 
 import holoquiz.gui as gui
-from holoquiz.config import BotConfig
+from holoquiz.config import BotConfig, ChatTriggerConfig, CoordinateLockConfig
 from holoquiz.gui import (
     BROWSER_SEARCH_STATUS_MAX_CHARS,
     ControlPanelController,
@@ -131,7 +131,41 @@ def test_control_panel_controller_rejects_reversed_send_delay_range():
     assert controls.get_config().send_delay_seconds == 0.8
 
 
-def test_chat_trigger_form_requires_micro_or_sound():
+def test_control_panel_controller_updates_auto_hit_range():
+    controls = RuntimeControls.from_config(BotConfig())
+    controller = ControlPanelController(controls)
+
+    result = controller.set_coordinate_lock_auto_hit_range("0.1", "0.5")
+
+    assert result.ok is True
+    assert controls.get_config().coordinate_lock_auto_hit_min_seconds == 0.1
+    assert controls.get_config().coordinate_lock_auto_hit_max_seconds == 0.5
+
+
+def test_control_panel_controller_rejects_invalid_auto_hit_range():
+    controls = RuntimeControls.from_config(BotConfig())
+    controller = ControlPanelController(controls)
+
+    non_numeric = controller.set_coordinate_lock_auto_hit_range("fast", "0.5")
+    reversed_range = controller.set_coordinate_lock_auto_hit_range("0.5", "0.1")
+
+    assert non_numeric.ok is False
+    assert "numbers" in non_numeric.message
+    assert reversed_range.ok is False
+    assert "less than or equal" in reversed_range.message
+
+
+def test_gui_feature_tabs_group_growing_toolset():
+    assert gui.FEATURE_TAB_LABELS == (
+        "HoloQuiz",
+        "Screen Watcher",
+        "Chat Triggers",
+        "Coordinate Lock",
+        "Activity",
+    )
+
+
+def test_chat_trigger_form_requires_macro_or_sound():
     panel = object.__new__(gui.HoloQuizControlPanel)
     panel.chat_trigger_trigger_var = SimpleNamespace(get=lambda: "Wake up!")
     panel.chat_trigger_macro_var = SimpleNamespace(get=lambda: "")
@@ -140,10 +174,10 @@ def test_chat_trigger_form_requires_micro_or_sound():
     result = panel._build_chat_trigger_from_form()
 
     assert result.ok is False
-    assert result.message == "Micro or sound file is required."
+    assert result.message == "Macro or sound file is required."
 
 
-def test_chat_trigger_form_accepts_sound_without_micro(tmp_path):
+def test_chat_trigger_form_accepts_sound_without_macro(tmp_path):
     sound_path = tmp_path / "alarm.mp3"
     sound_path.write_bytes(b"audio fixture")
     panel = object.__new__(gui.HoloQuizControlPanel)
@@ -161,6 +195,75 @@ def test_chat_trigger_form_accepts_sound_without_micro(tmp_path):
     assert result.value is not None
     assert result.value.macro == ""
     assert result.value.sound_path == sound_path
+
+
+def test_chat_trigger_table_action_toggles_selected_rule():
+    trigger = ChatTriggerConfig(
+        id="wake-up",
+        trigger_phrase="Wake up!",
+        macro="Hello",
+        cooldown_seconds=30,
+        enabled=True,
+    )
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.controls = RuntimeControls.from_config(BotConfig(chat_triggers=(trigger,)))
+    panel._save_chat_triggers_settings = lambda: None
+    panel._refresh_chat_trigger_rows = lambda: None
+
+    panel._on_chat_trigger_toggle(trigger.id)
+
+    assert panel.controls.get_chat_triggers()[0].enabled is False
+
+
+def test_coordinate_table_action_makes_only_selected_target_active():
+    first = CoordinateLockConfig(id="first", name="First", x=1, y=2, z=3)
+    second = CoordinateLockConfig(
+        id="second", name="Second", x=4, y=5, z=6, enabled=False
+    )
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.controls = RuntimeControls.from_config(
+        BotConfig(coordinate_locks=(first, second))
+    )
+    panel._save_coordinate_lock_settings = lambda: None
+    panel._refresh_coordinate_lock_rows = lambda: None
+
+    panel._on_coordinate_lock_toggle(second.id)
+
+    locks = panel.controls.get_coordinate_locks()
+    assert [lock.enabled for lock in locks] == [False, True]
+
+
+def test_coordinate_form_builds_target_with_custom_active_area():
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.coordinate_lock_name_var = SimpleNamespace(get=lambda: "Farm")
+    panel.coordinate_lock_x_var = SimpleNamespace(get=lambda: "10")
+    panel.coordinate_lock_y_var = SimpleNamespace(get=lambda: "64")
+    panel.coordinate_lock_z_var = SimpleNamespace(get=lambda: "-20")
+    panel.coordinate_lock_active_area_var = SimpleNamespace(get=lambda: "75")
+    panel.coordinate_lock_editing_id = None
+    panel.controls = RuntimeControls.from_config(BotConfig())
+
+    result = panel._build_coordinate_lock_from_form()
+
+    assert result.ok is True
+    assert result.value is not None
+    assert result.value.active_area == 75
+
+
+def test_coordinate_form_rejects_non_positive_active_area():
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.coordinate_lock_name_var = SimpleNamespace(get=lambda: "Farm")
+    panel.coordinate_lock_x_var = SimpleNamespace(get=lambda: "10")
+    panel.coordinate_lock_y_var = SimpleNamespace(get=lambda: "64")
+    panel.coordinate_lock_z_var = SimpleNamespace(get=lambda: "-20")
+    panel.coordinate_lock_active_area_var = SimpleNamespace(get=lambda: "0")
+    panel.coordinate_lock_editing_id = None
+    panel.controls = RuntimeControls.from_config(BotConfig())
+
+    result = panel._build_coordinate_lock_from_form()
+
+    assert result.ok is False
+    assert result.message == "Active area must be greater than 0."
 
 
 def test_screen_phrase_worker_debug_logs_ocr_details():

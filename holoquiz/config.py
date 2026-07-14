@@ -34,6 +34,7 @@ class CoordinateLockConfig:
     z: float
     enabled: bool = True
     name: str = ""
+    active_area: float = 50.0
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,8 @@ class BotConfig:
     chat_triggers: tuple[ChatTriggerConfig, ...] = ()
     coordinate_lock_enabled: bool = False
     coordinate_lock_auto_hit_enabled: bool = False
+    coordinate_lock_auto_hit_min_seconds: float = 0.3
+    coordinate_lock_auto_hit_max_seconds: float = 0.8
     coordinate_lock_look_at_enabled: bool = False
     coordinate_locks: tuple[CoordinateLockConfig, ...] = ()
     coordinate_lock_max_distance: float = 50.0
@@ -153,7 +156,13 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
         values["chat_triggers"] = _chat_triggers_from_json(values["chat_triggers"])
     if "coordinate_locks" in values:
         values["coordinate_locks"] = _coordinate_locks_from_json(
-            values["coordinate_locks"]
+            values["coordinate_locks"],
+            default_active_area=float(
+                values.get(
+                    "coordinate_lock_max_distance",
+                    BotConfig.coordinate_lock_max_distance,
+                )
+            ),
         )
 
     return BotConfig(**values)
@@ -213,6 +222,8 @@ def save_coordinate_lock_settings(
     *,
     enabled: bool,
     auto_hit_enabled: bool = False,
+    auto_hit_min_seconds: float = BotConfig.coordinate_lock_auto_hit_min_seconds,
+    auto_hit_max_seconds: float = BotConfig.coordinate_lock_auto_hit_max_seconds,
     look_at_enabled: bool = False,
 ) -> None:
     raw_config: dict[str, Any] = {}
@@ -223,6 +234,8 @@ def save_coordinate_lock_settings(
 
     raw_config["coordinate_lock_enabled"] = enabled
     raw_config["coordinate_lock_auto_hit_enabled"] = auto_hit_enabled
+    raw_config["coordinate_lock_auto_hit_min_seconds"] = auto_hit_min_seconds
+    raw_config["coordinate_lock_auto_hit_max_seconds"] = auto_hit_max_seconds
     raw_config["coordinate_lock_look_at_enabled"] = look_at_enabled
     raw_config["coordinate_locks"] = [
         _coordinate_lock_to_json(lock) for lock in locks
@@ -294,7 +307,11 @@ def _chat_trigger_to_json(trigger: ChatTriggerConfig) -> dict[str, Any]:
     }
 
 
-def _coordinate_locks_from_json(value: Any) -> tuple[CoordinateLockConfig, ...]:
+def _coordinate_locks_from_json(
+    value: Any,
+    *,
+    default_active_area: float = 50.0,
+) -> tuple[CoordinateLockConfig, ...]:
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -312,6 +329,7 @@ def _coordinate_locks_from_json(value: Any) -> tuple[CoordinateLockConfig, ...]:
                 z=float(raw_lock["z"]),
                 enabled=bool(raw_lock.get("enabled", True)),
                 name=str(raw_lock.get("name", "")).strip(),
+                active_area=float(raw_lock.get("active_area", default_active_area)),
             )
         )
     return tuple(locks)
@@ -325,6 +343,7 @@ def _coordinate_lock_to_json(lock: CoordinateLockConfig) -> dict[str, Any]:
         "z": lock.z,
         "enabled": lock.enabled,
         "name": lock.name,
+        "active_area": lock.active_area,
     }
 
 

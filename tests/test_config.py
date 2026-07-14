@@ -49,6 +49,8 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "chat_triggers": [],
         "coordinate_lock_enabled": False,
         "coordinate_lock_auto_hit_enabled": False,
+        "coordinate_lock_auto_hit_min_seconds": 0.3,
+        "coordinate_lock_auto_hit_max_seconds": 0.8,
         "coordinate_lock_look_at_enabled": False,
         "coordinate_locks": [],
         "coordinate_lock_max_distance": 50.0,
@@ -61,29 +63,42 @@ def test_load_and_save_coordinate_locks(tmp_path):
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps({"dry_run": False}), encoding="utf-8")
     locks = [
-        CoordinateLockConfig(id="home", x=1.5, y=64.0, z=-3.25, name="Home"),
+        CoordinateLockConfig(
+            id="home", x=1.5, y=64.0, z=-3.25, name="Home", active_area=25.0
+        ),
         CoordinateLockConfig(
             id="afk", x=10.0, y=70.0, z=20.0, enabled=False, name="AFK Room"
         ),
     ]
 
     save_coordinate_lock_settings(
-        config_path, locks, enabled=True, auto_hit_enabled=True, look_at_enabled=True
+        config_path,
+        locks,
+        enabled=True,
+        auto_hit_enabled=True,
+        auto_hit_min_seconds=0.1,
+        auto_hit_max_seconds=0.5,
+        look_at_enabled=True,
     )
     config = load_config(config_path)
 
     assert config.dry_run is False
     assert config.coordinate_lock_enabled is True
     assert config.coordinate_lock_auto_hit_enabled is True
+    assert config.coordinate_lock_auto_hit_min_seconds == 0.1
+    assert config.coordinate_lock_auto_hit_max_seconds == 0.5
     assert config.coordinate_lock_look_at_enabled is True
     assert config.coordinate_locks == tuple(locks)
 
 
-def test_load_coordinate_locks_without_names_keeps_backward_compatibility(tmp_path):
+def test_load_coordinate_locks_without_new_fields_keeps_backward_compatibility(
+    tmp_path,
+):
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
             {
+                "coordinate_lock_max_distance": 35,
                 "coordinate_locks": [
                     {"id": "old-lock", "x": 1, "y": 64, "z": -2},
                 ]
@@ -95,7 +110,9 @@ def test_load_coordinate_locks_without_names_keeps_backward_compatibility(tmp_pa
     config = load_config(config_path)
 
     assert config.coordinate_locks == (
-        CoordinateLockConfig(id="old-lock", x=1.0, y=64.0, z=-2.0),
+        CoordinateLockConfig(
+            id="old-lock", x=1.0, y=64.0, z=-2.0, active_area=35.0
+        ),
     )
 
 

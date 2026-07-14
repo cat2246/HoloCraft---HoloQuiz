@@ -36,6 +36,8 @@
   ],
   "coordinate_lock_enabled": false,
   "coordinate_lock_auto_hit_enabled": false,
+  "coordinate_lock_auto_hit_min_seconds": 0.3,
+  "coordinate_lock_auto_hit_max_seconds": 0.8,
   "coordinate_lock_look_at_enabled": false,
   "coordinate_locks": [],
   "coordinate_lock_max_distance": 50.0,

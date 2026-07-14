@@ -43,6 +43,8 @@ class RuntimeSnapshot:
     chat_trigger_dry_run: bool
     coordinate_lock_enabled: bool
     coordinate_lock_auto_hit_enabled: bool
+    coordinate_lock_auto_hit_min_seconds: float
+    coordinate_lock_auto_hit_max_seconds: float
     coordinate_lock_look_at_enabled: bool
     coordinate_locks: tuple[CoordinateLockConfig, ...]
 
@@ -70,6 +72,12 @@ class RuntimeControls:
         self._coordinate_lock_enabled = base_config.coordinate_lock_enabled
         self._coordinate_lock_auto_hit_enabled = (
             base_config.coordinate_lock_auto_hit_enabled
+        )
+        self._coordinate_lock_auto_hit_min_seconds = (
+            base_config.coordinate_lock_auto_hit_min_seconds
+        )
+        self._coordinate_lock_auto_hit_max_seconds = (
+            base_config.coordinate_lock_auto_hit_max_seconds
         )
         self._coordinate_lock_look_at_enabled = (
             base_config.coordinate_lock_look_at_enabled
@@ -106,6 +114,12 @@ class RuntimeControls:
                 chat_trigger_dry_run=self._chat_trigger_dry_run,
                 coordinate_lock_enabled=self._coordinate_lock_enabled,
                 coordinate_lock_auto_hit_enabled=self._coordinate_lock_auto_hit_enabled,
+                coordinate_lock_auto_hit_min_seconds=(
+                    self._coordinate_lock_auto_hit_min_seconds
+                ),
+                coordinate_lock_auto_hit_max_seconds=(
+                    self._coordinate_lock_auto_hit_max_seconds
+                ),
                 coordinate_lock_look_at_enabled=self._coordinate_lock_look_at_enabled,
                 coordinate_locks=tuple(self._coordinate_locks),
             )
@@ -125,6 +139,12 @@ class RuntimeControls:
                 chat_trigger_dry_run=self._chat_trigger_dry_run,
                 coordinate_lock_enabled=self._coordinate_lock_enabled,
                 coordinate_lock_auto_hit_enabled=self._coordinate_lock_auto_hit_enabled,
+                coordinate_lock_auto_hit_min_seconds=(
+                    self._coordinate_lock_auto_hit_min_seconds
+                ),
+                coordinate_lock_auto_hit_max_seconds=(
+                    self._coordinate_lock_auto_hit_max_seconds
+                ),
                 coordinate_lock_look_at_enabled=self._coordinate_lock_look_at_enabled,
                 coordinate_locks=tuple(self._coordinate_locks),
             )
@@ -214,6 +234,21 @@ class RuntimeControls:
     def set_coordinate_lock_auto_hit_enabled(self, enabled: bool) -> None:
         with self._lock:
             self._coordinate_lock_auto_hit_enabled = enabled
+
+    def set_coordinate_lock_auto_hit_range(
+        self,
+        min_seconds: float,
+        max_seconds: float,
+    ) -> None:
+        if min_seconds <= 0 or max_seconds <= 0:
+            raise ValueError("Auto hit times must be greater than 0.")
+        if min_seconds > max_seconds:
+            raise ValueError(
+                "Minimum auto hit time must be less than or equal to maximum time."
+            )
+        with self._lock:
+            self._coordinate_lock_auto_hit_min_seconds = min_seconds
+            self._coordinate_lock_auto_hit_max_seconds = max_seconds
 
     def set_coordinate_lock_look_at_enabled(self, enabled: bool) -> None:
         with self._lock:
