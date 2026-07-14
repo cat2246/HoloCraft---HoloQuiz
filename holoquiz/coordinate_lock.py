@@ -28,12 +28,13 @@ class PlayerPosition:
     y: float
     z: float
     heading: float = 0.0
+    pitch: float | None = None
 
 
 class PlayerDataClient:
     def __init__(
         self,
-        url: str = "http://localhost:8025/data/player",
+        url: str = "http://127.0.0.1:8026/data/player",
         *,
         timeout_seconds: float = 0.75,
         opener: Callable[..., Any] = urlopen,
@@ -47,6 +48,16 @@ class PlayerDataClient:
             payload = json.loads(response.read().decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("Player endpoint returned a non-object response.")
+        position = payload.get("position")
+        rotation = payload.get("rotation")
+        if isinstance(position, dict) and isinstance(rotation, dict):
+            return PlayerPosition(
+                x=_required_float(position, "x", "Player position"),
+                y=_required_float(position, "y", "Player position"),
+                z=_required_float(position, "z", "Player position"),
+                heading=_required_float(rotation, "yaw", "Player rotation"),
+                pitch=_required_float(rotation, "pitch", "Player rotation"),
+            )
         return PlayerPosition(
             x=_coordinate(payload, "posX", "x"),
             y=_coordinate(payload, "posY", "y"),
@@ -86,6 +97,9 @@ class NearbyEntity:
     distance: float
     name: str
     custom_name: str | None = None
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
 
 
 class NearbyEntityClient:
@@ -144,7 +158,21 @@ class NearbyEntityClient:
                 raise ValueError(
                     f"Nearby {collection} entity has an invalid custom_name."
                 )
-            entities.append(NearbyEntity(distance, name, custom_name))
+            position = raw_entity.get("position")
+            if not isinstance(position, dict):
+                raise ValueError(
+                    f"Nearby {collection} entity is missing a position object."
+                )
+            entities.append(
+                NearbyEntity(
+                    distance,
+                    name,
+                    custom_name,
+                    x=_required_float(position, "x", f"Nearby {collection} position"),
+                    y=_required_float(position, "y", f"Nearby {collection} position"),
+                    z=_required_float(position, "z", f"Nearby {collection} position"),
+                )
+            )
         return tuple(entities)
 
 
@@ -156,11 +184,66 @@ def entity_matches_auto_hit_target(
 ) -> bool:
     if entity.distance > AUTO_HIT_TARGET_DISTANCE:
         return False
+    return _entity_name_matches(
+        entity,
+        target_name=target_name,
+        name_attribute=name_attribute,
+    )
+
+
+def _entity_name_matches(
+    entity: NearbyEntity,
+    *,
+    target_name: str,
+    name_attribute: str,
+) -> bool:
     normalized_target = target_name.strip().casefold()
     if not normalized_target:
         return True
     candidate = getattr(entity, name_attribute)
     return candidate is not None and candidate.strip().casefold() == normalized_target
+
+
+def nearest_look_target(
+    lock: CoordinateLockConfig,
+    *,
+    players: tuple[NearbyEntity, ...] = (),
+    mobs: tuple[NearbyEntity, ...] = (),
+) -> NearbyEntity | None:
+    candidates: list[NearbyEntity] = []
+    if lock.auto_hit_players:
+        candidates.extend(
+            entity
+            for entity in players
+            if entity.distance <= lock.active_area
+            and _entity_name_matches(
+                entity,
+                target_name=lock.auto_hit_target_name,
+                name_attribute="custom_name",
+            )
+        )
+    if lock.auto_hit_mobs:
+        candidates.extend(
+            entity
+            for entity in mobs
+            if entity.distance <= lock.active_area
+            and _entity_name_matches(
+                entity,
+                target_name=lock.auto_hit_target_name,
+                name_attribute="name",
+            )
+        )
+    return min(candidates, key=lambda entity: entity.distance, default=None)
+
+
+def _required_float(payload: dict[str, Any], key: str, context: str) -> float:
+    try:
+        value = float(payload[key])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"{context} has an invalid {key}.") from error
+    if not math.isfinite(value):
+        raise ValueError(f"{context} has an invalid {key}.")
+    return value
 
 
 def _coordinate(payload: dict[str, Any], primary: str, fallback: str) -> float:
@@ -246,19 +329,68 @@ def camera_turn_pixels_for_target(
 ) -> int:
     """Calculate an adaptive horizontal camera correction for a target."""
     heading_delta = heading_delta_for_target(position, lock)
-    absolute_angle = abs(heading_delta)
-    if absolute_angle < 0.75:
-        return 0
-
     horizontal_distance = math.hypot(lock.x - position.x, lock.z - position.z)
-    # Large heading errors need decisive turns, while small errors should be gentle.
-    angle_strength = 0.22 + 0.68 * min(absolute_angle / 90.0, 1.0)
     # Direction matters increasingly as the player approaches the exact coordinate.
     distance_strength = 0.72 + 0.28 / (1.0 + horizontal_distance / 12.0)
-    correction_degrees = heading_delta * angle_strength * distance_strength
-    # Minecraft consumes relative mouse counts rather than degrees. Around sixty-four
-    # counts per degree provides a useful turn at common in-game sensitivities;
-    # heading feedback on the next tick corrects any sensitivity-specific error.
+    return _adaptive_camera_counts(
+        heading_delta,
+        mouse_counts_per_degree,
+        strength_multiplier=distance_strength,
+    )
+
+
+PLAYER_EYE_HEIGHT = 1.62
+TARGET_BODY_CENTER_HEIGHT = 0.9
+
+
+def camera_angle_deltas_for_entity(
+    position: PlayerPosition,
+    entity: NearbyEntity,
+) -> tuple[float, float]:
+    if position.pitch is None:
+        raise ValueError("Player endpoint is missing camera pitch.")
+    delta_x = entity.x - position.x
+    delta_z = entity.z - position.z
+    horizontal_distance = math.hypot(delta_x, delta_z)
+    target_yaw = math.degrees(math.atan2(-delta_x, delta_z))
+    target_pitch = math.degrees(
+        math.atan2(
+            position.y + PLAYER_EYE_HEIGHT
+            - (entity.y + TARGET_BODY_CENTER_HEIGHT),
+            horizontal_distance,
+        )
+    )
+    yaw_delta = (target_yaw - position.heading + 180.0) % 360.0 - 180.0
+    return yaw_delta, target_pitch - position.pitch
+
+
+def camera_turn_pixels_for_entity(
+    position: PlayerPosition,
+    entity: NearbyEntity,
+    *,
+    mouse_counts_per_degree: float = 64.0,
+) -> tuple[int, int]:
+    yaw_delta, pitch_delta = camera_angle_deltas_for_entity(position, entity)
+    return (
+        _adaptive_camera_counts(yaw_delta, mouse_counts_per_degree),
+        _adaptive_camera_counts(pitch_delta, mouse_counts_per_degree),
+    )
+
+
+def _adaptive_camera_counts(
+    angle_delta: float,
+    mouse_counts_per_degree: float,
+    *,
+    strength_multiplier: float = 1.0,
+) -> int:
+    absolute_angle = abs(angle_delta)
+    if absolute_angle < 0.75:
+        return 0
+    # Large angular errors need decisive turns, while small errors should be gentle.
+    angle_strength = 0.22 + 0.68 * min(absolute_angle / 90.0, 1.0)
+    correction_degrees = angle_delta * angle_strength * strength_multiplier
+    # Minecraft consumes relative mouse counts rather than degrees. Heading feedback
+    # on the next tick learns the user's sensitivity-specific conversion ratio.
     mouse_counts = correction_degrees * mouse_counts_per_degree
     return round(max(-9600.0, min(9600.0, mouse_counts)))
 

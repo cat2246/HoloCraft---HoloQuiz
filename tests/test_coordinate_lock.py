@@ -11,11 +11,14 @@ from holoquiz.coordinate_lock import (
     PlayerDataClient,
     PlayerPosition,
     auto_hit_delay_seconds,
+    camera_angle_deltas_for_entity,
+    camera_turn_pixels_for_entity,
     camera_turn_pixels_for_target,
     entity_matches_auto_hit_target,
     movement_key_for_target,
     heading_delta_for_target,
     nearest_enabled_lock,
+    nearest_look_target,
 )
 from holoquiz.keyboard_coordinator import KeyboardInputCoordinator
 from holoquiz.runtime import RuntimeControls
@@ -44,11 +47,18 @@ def test_nearby_entity_client_reads_players_and_mobs_from_expected_urls():
                     "distance": 4.5,
                     "name": "Alex",
                     "custom_name": "[Lv 6]Tatsunoko",
+                    "position": {"x": 4.0, "y": 64.0, "z": 2.0},
                 }
             ]
         },
         "http://127.0.0.1:8026/data/mobs": {
-            "mobs": [{"distance": 3.0, "name": "Zombie"}]
+            "mobs": [
+                {
+                    "distance": 3.0,
+                    "name": "Zombie",
+                    "position": {"x": -2.0, "y": 63.0, "z": 1.0},
+                }
+            ]
         },
     }
 
@@ -59,9 +69,18 @@ def test_nearby_entity_client_reads_players_and_mobs_from_expected_urls():
     client = NearbyEntityClient(opener=opener, timeout_seconds=0.25)
 
     assert client.get_players() == (
-        NearbyEntity(4.5, "Alex", "[Lv 6]Tatsunoko"),
+        NearbyEntity(
+            4.5,
+            "Alex",
+            "[Lv 6]Tatsunoko",
+            x=4.0,
+            y=64.0,
+            z=2.0,
+        ),
     )
-    assert client.get_mobs() == (NearbyEntity(3.0, "Zombie", None),)
+    assert client.get_mobs() == (
+        NearbyEntity(3.0, "Zombie", None, x=-2.0, y=63.0, z=1.0),
+    )
     assert requests == [
         ("http://127.0.0.1:8026/data/players", 0.25),
         ("http://127.0.0.1:8026/data/mobs", 0.25),
@@ -191,9 +210,9 @@ class FakePyAutoGui:
         self.events.append(("move", x, y))
 
 
-def test_player_data_client_reads_local_api_shape():
+def test_player_data_client_reads_legacy_flat_api_shape():
     def open_player(url, timeout):
-        assert url == "http://localhost:8025/data/player"
+        assert url == "http://127.0.0.1:8026/data/player"
         assert timeout == 0.75
         return FakeResponse(
             {"posX": -1.25, "posY": 64, "posZ": 8.5, "heading": -2}
@@ -202,6 +221,43 @@ def test_player_data_client_reads_local_api_shape():
     position = PlayerDataClient(opener=open_player).get_position()
 
     assert position == PlayerPosition(-1.25, 64.0, 8.5, -2.0)
+
+
+def test_player_data_client_reads_nested_position_and_rotation():
+    client = PlayerDataClient(
+        opener=lambda *_args, **_kwargs: FakeResponse(
+            {
+                "position": {"x": 58.25, "y": 116, "z": -181.5},
+                "rotation": {"yaw": -122.5, "pitch": 3.25},
+            }
+        )
+    )
+
+    assert client.get_position() == PlayerPosition(
+        58.25,
+        116.0,
+        -181.5,
+        heading=-122.5,
+        pitch=3.25,
+    )
+
+
+def test_player_data_client_rejects_non_finite_nested_rotation():
+    client = PlayerDataClient(
+        opener=lambda *_args, **_kwargs: FakeResponse(
+            {
+                "position": {"x": 1, "y": 2, "z": 3},
+                "rotation": {"yaw": 4, "pitch": "nan"},
+            }
+        )
+    )
+
+    try:
+        client.get_position()
+    except ValueError as error:
+        assert "pitch" in str(error)
+    else:
+        raise AssertionError("Expected non-finite pitch to fail")
 
 
 def test_container_data_client_reads_local_api_shape():
@@ -242,6 +298,57 @@ def test_heading_delta_uses_shortest_turn_toward_target():
     lock = CoordinateLockConfig("west", -10, 64, 0)
 
     assert heading_delta_for_target(PlayerPosition(0, 64, 0, heading=170), lock) == -80
+
+
+def test_nearest_look_target_filters_types_name_and_active_area():
+    lock = CoordinateLockConfig(
+        "farm",
+        0,
+        64,
+        0,
+        active_area=20,
+        auto_hit_players=True,
+        auto_hit_mobs=False,
+        auto_hit_target_name="Tatsunoko",
+    )
+    players = (
+        NearbyEntity(8, "Alex", "Other", x=8, y=64, z=0),
+        NearbyEntity(6, "Alex", "tatsunoko", x=6, y=64, z=0),
+        NearbyEntity(21, "Alex", "Tatsunoko", x=21, y=64, z=0),
+    )
+    mobs = (NearbyEntity(2, "Tatsunoko", None, x=2, y=64, z=0),)
+
+    assert nearest_look_target(lock, players=players, mobs=mobs) == players[1]
+
+
+def test_nearest_look_target_chooses_closest_when_name_is_any():
+    lock = CoordinateLockConfig("farm", 0, 64, 0, active_area=20)
+    players = (NearbyEntity(7, "Alex", None, x=7, y=64, z=0),)
+    mobs = (NearbyEntity(3, "Zombie", None, x=3, y=64, z=0),)
+
+    assert nearest_look_target(lock, players=players, mobs=mobs) == mobs[0]
+
+
+def test_camera_angle_deltas_aim_at_target_body_center():
+    position = PlayerPosition(0, 64, 0, heading=0, pitch=0)
+    target = NearbyEntity(10, "Zombie", None, x=10, y=64, z=0)
+
+    yaw_delta, pitch_delta = camera_angle_deltas_for_entity(position, target)
+
+    assert yaw_delta == -90
+    assert 4.0 < pitch_delta < 4.2
+
+
+def test_camera_turn_for_entity_requires_player_pitch():
+    position = PlayerPosition(0, 64, 0, heading=0, pitch=None)
+    target = NearbyEntity(10, "Zombie", None, x=10, y=64, z=0)
+
+    try:
+        camera_turn_pixels_for_entity(position, target)
+    except ValueError as error:
+        assert "pitch" in str(error).casefold()
+    else:
+        raise AssertionError("Expected target tracking without pitch to fail")
 
 
 def test_camera_turn_adapts_to_angle_and_distance():
