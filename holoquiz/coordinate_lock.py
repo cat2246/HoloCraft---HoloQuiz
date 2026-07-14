@@ -785,17 +785,17 @@ class CoordinateLockWorker:
         except Exception as error:
             self._auto_hit_error(error)
             return False
-        with self._input_coordinator.movement_session() as input_allowed:
+        try:
+            if self.container_client.is_open():
+                self._clear_auto_hit_state()
+                return False
+        except Exception as error:
+            self._status(f"[coordinate-lock-auto-hit-container-error] {error}")
+            return False
+        pyautogui = self._pyautogui or self._load_pyautogui()
+        with self._input_coordinator.click_session() as input_allowed:
             if not input_allowed:
                 return False
-            try:
-                if self.container_client.is_open():
-                    self._clear_auto_hit_state()
-                    return False
-            except Exception as error:
-                self._status(f"[coordinate-lock-auto-hit-container-error] {error}")
-                return False
-            pyautogui = self._pyautogui or self._load_pyautogui()
             pyautogui.click(button="left", _pause=False)
             return True
 

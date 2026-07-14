@@ -812,6 +812,39 @@ def test_worker_auto_hit_requires_a_nearby_entity_even_inside_coordinate_area():
     assert ("click", "left") not in keys.events
 
 
+def test_worker_auto_hits_during_active_camera_movement():
+    lock = CoordinateLockConfig("home", 0, 64, 0)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_lock_look_mode="target",
+            coordinate_locks=(lock,),
+        )
+    )
+    keys = FakePyAutoGui()
+    coordinator = KeyboardInputCoordinator()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        container_client=FakeContainerClient(),
+        entity_client=FakeNearbyEntityClient(
+            players=(NearbyEntity(2.0, "Alex", None),)
+        ),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+        input_coordinator=coordinator,
+    )
+    worker._auto_hit_lock_id = lock.id
+    worker._auto_hit_in_range.set()
+
+    with coordinator.movement_session() as camera_movement_allowed:
+        assert camera_movement_allowed is True
+        assert worker._auto_hit_once() is True
+
+    assert keys.events == [("click", "left")]
+
+
 def test_worker_auto_hits_for_selected_player_custom_name():
     lock = CoordinateLockConfig(
         "home",
