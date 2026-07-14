@@ -4,6 +4,9 @@ from pathlib import Path
 from holoquiz.config import (
     BotConfig,
     ChatTriggerConfig,
+    COORDINATE_LOCK_LOOK_LOCK,
+    COORDINATE_LOCK_LOOK_NONE,
+    COORDINATE_LOCK_LOOK_TARGET,
     CoordinateLockConfig,
     ScreenPhraseRegionConfig,
     discover_default_log_path,
@@ -51,11 +54,11 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "coordinate_lock_auto_hit_enabled": False,
         "coordinate_lock_auto_hit_min_seconds": 0.3,
         "coordinate_lock_auto_hit_max_seconds": 0.8,
-        "coordinate_lock_look_at_enabled": False,
+        "coordinate_lock_look_mode": "none",
         "coordinate_locks": [],
         "coordinate_lock_max_distance": 50.0,
         "coordinate_lock_tolerance": 0.75,
-        "player_data_url": "http://localhost:8025/data/player",
+        "player_data_url": "http://127.0.0.1:8026/data/player",
     }
 
 
@@ -86,7 +89,7 @@ def test_load_and_save_coordinate_locks(tmp_path):
         auto_hit_enabled=True,
         auto_hit_min_seconds=0.1,
         auto_hit_max_seconds=0.5,
-        look_at_enabled=True,
+        look_mode=COORDINATE_LOCK_LOOK_TARGET,
     )
     config = load_config(config_path)
 
@@ -95,7 +98,7 @@ def test_load_and_save_coordinate_locks(tmp_path):
     assert config.coordinate_lock_auto_hit_enabled is True
     assert config.coordinate_lock_auto_hit_min_seconds == 0.1
     assert config.coordinate_lock_auto_hit_max_seconds == 0.5
-    assert config.coordinate_lock_look_at_enabled is True
+    assert config.coordinate_lock_look_mode == COORDINATE_LOCK_LOOK_TARGET
     assert config.coordinate_locks == tuple(locks)
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     assert raw["coordinate_locks"][0]["auto_hit_players"] is True
@@ -104,6 +107,74 @@ def test_load_and_save_coordinate_locks(tmp_path):
         raw["coordinate_locks"][0]["auto_hit_target_name"]
         == "[Lv 6]Tatsunoko"
     )
+
+
+def test_load_config_migrates_legacy_coordinate_look_and_player_url(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "coordinate_lock_look_at_enabled": True,
+                "player_data_url": "http://localhost:8025/data/player",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.coordinate_lock_look_mode == COORDINATE_LOCK_LOOK_LOCK
+    assert config.player_data_url == "http://127.0.0.1:8026/data/player"
+
+
+def test_load_config_migrates_false_legacy_coordinate_look_to_none(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"coordinate_lock_look_at_enabled": False}),
+        encoding="utf-8",
+    )
+
+    assert (
+        load_config(config_path).coordinate_lock_look_mode
+        == COORDINATE_LOCK_LOOK_NONE
+    )
+
+
+def test_new_coordinate_look_mode_takes_precedence_over_legacy_boolean(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "coordinate_lock_look_mode": "target",
+                "coordinate_lock_look_at_enabled": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        load_config(config_path).coordinate_lock_look_mode
+        == COORDINATE_LOCK_LOOK_TARGET
+    )
+
+
+def test_save_coordinate_locks_persists_mode_without_legacy_boolean(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"coordinate_lock_look_at_enabled": True}),
+        encoding="utf-8",
+    )
+
+    save_coordinate_lock_settings(
+        config_path,
+        [],
+        enabled=True,
+        look_mode=COORDINATE_LOCK_LOOK_TARGET,
+    )
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    assert raw["coordinate_lock_look_mode"] == "target"
+    assert "coordinate_lock_look_at_enabled" not in raw
 
 
 def test_load_coordinate_locks_without_new_fields_keeps_backward_compatibility(

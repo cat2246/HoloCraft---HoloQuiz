@@ -7,6 +7,25 @@ from pathlib import Path
 from typing import Any
 
 
+COORDINATE_LOCK_LOOK_NONE = "none"
+COORDINATE_LOCK_LOOK_LOCK = "lock"
+COORDINATE_LOCK_LOOK_TARGET = "target"
+VALID_COORDINATE_LOCK_LOOK_MODES = frozenset(
+    {
+        COORDINATE_LOCK_LOOK_NONE,
+        COORDINATE_LOCK_LOOK_LOCK,
+        COORDINATE_LOCK_LOOK_TARGET,
+    }
+)
+LEGACY_PLAYER_DATA_URLS = frozenset(
+    {
+        "http://localhost:8025/data/player",
+        "http://127.0.0.1:8025/data/player",
+    }
+)
+DEFAULT_PLAYER_DATA_URL = "http://127.0.0.1:8026/data/player"
+
+
 @dataclass(frozen=True)
 class ScreenPhraseRegionConfig:
     x: int
@@ -74,11 +93,18 @@ class BotConfig:
     coordinate_lock_auto_hit_enabled: bool = False
     coordinate_lock_auto_hit_min_seconds: float = 0.3
     coordinate_lock_auto_hit_max_seconds: float = 0.8
-    coordinate_lock_look_at_enabled: bool = False
+    coordinate_lock_look_mode: str = COORDINATE_LOCK_LOOK_NONE
     coordinate_locks: tuple[CoordinateLockConfig, ...] = ()
     coordinate_lock_max_distance: float = 50.0
     coordinate_lock_tolerance: float = 0.75
-    player_data_url: str = "http://localhost:8025/data/player"
+    player_data_url: str = DEFAULT_PLAYER_DATA_URL
+
+
+def validate_coordinate_lock_look_mode(mode: str) -> str:
+    normalized = str(mode).strip().casefold()
+    if normalized not in VALID_COORDINATE_LOCK_LOOK_MODES:
+        raise ValueError(f"Invalid coordinate lock look mode: {mode}")
+    return normalized
 
 
 def discover_default_log_path() -> Path | None:
@@ -157,6 +183,19 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
         )
     if "chat_triggers" in values:
         values["chat_triggers"] = _chat_triggers_from_json(values["chat_triggers"])
+    legacy_look_enabled = bool(
+        values.pop("coordinate_lock_look_at_enabled", False)
+    )
+    values["coordinate_lock_look_mode"] = validate_coordinate_lock_look_mode(
+        values.get(
+            "coordinate_lock_look_mode",
+            COORDINATE_LOCK_LOOK_LOCK
+            if legacy_look_enabled
+            else COORDINATE_LOCK_LOOK_NONE,
+        )
+    )
+    if values.get("player_data_url") in LEGACY_PLAYER_DATA_URLS:
+        values["player_data_url"] = DEFAULT_PLAYER_DATA_URL
     if "coordinate_locks" in values:
         values["coordinate_locks"] = _coordinate_locks_from_json(
             values["coordinate_locks"],
@@ -227,7 +266,7 @@ def save_coordinate_lock_settings(
     auto_hit_enabled: bool = False,
     auto_hit_min_seconds: float = BotConfig.coordinate_lock_auto_hit_min_seconds,
     auto_hit_max_seconds: float = BotConfig.coordinate_lock_auto_hit_max_seconds,
-    look_at_enabled: bool = False,
+    look_mode: str = COORDINATE_LOCK_LOOK_NONE,
 ) -> None:
     raw_config: dict[str, Any] = {}
     if path.exists():
@@ -239,7 +278,10 @@ def save_coordinate_lock_settings(
     raw_config["coordinate_lock_auto_hit_enabled"] = auto_hit_enabled
     raw_config["coordinate_lock_auto_hit_min_seconds"] = auto_hit_min_seconds
     raw_config["coordinate_lock_auto_hit_max_seconds"] = auto_hit_max_seconds
-    raw_config["coordinate_lock_look_at_enabled"] = look_at_enabled
+    raw_config["coordinate_lock_look_mode"] = validate_coordinate_lock_look_mode(
+        look_mode
+    )
+    raw_config.pop("coordinate_lock_look_at_enabled", None)
     raw_config["coordinate_locks"] = [
         _coordinate_lock_to_json(lock) for lock in locks
     ]

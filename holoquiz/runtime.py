@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from threading import RLock
 
-from holoquiz.config import BotConfig, ChatTriggerConfig, CoordinateLockConfig
+from holoquiz.config import (
+    BotConfig,
+    ChatTriggerConfig,
+    CoordinateLockConfig,
+    validate_coordinate_lock_look_mode,
+)
 
 
 FIND_ANSWER_FUNCTION = "find_answer"
@@ -45,7 +50,7 @@ class RuntimeSnapshot:
     coordinate_lock_auto_hit_enabled: bool
     coordinate_lock_auto_hit_min_seconds: float
     coordinate_lock_auto_hit_max_seconds: float
-    coordinate_lock_look_at_enabled: bool
+    coordinate_lock_look_mode: str
     coordinate_locks: tuple[CoordinateLockConfig, ...]
 
 
@@ -79,8 +84,8 @@ class RuntimeControls:
         self._coordinate_lock_auto_hit_max_seconds = (
             base_config.coordinate_lock_auto_hit_max_seconds
         )
-        self._coordinate_lock_look_at_enabled = (
-            base_config.coordinate_lock_look_at_enabled
+        self._coordinate_lock_look_mode = validate_coordinate_lock_look_mode(
+            base_config.coordinate_lock_look_mode
         )
         self._coordinate_locks = _only_first_coordinate_lock_enabled(
             base_config.coordinate_locks
@@ -120,7 +125,7 @@ class RuntimeControls:
                 coordinate_lock_auto_hit_max_seconds=(
                     self._coordinate_lock_auto_hit_max_seconds
                 ),
-                coordinate_lock_look_at_enabled=self._coordinate_lock_look_at_enabled,
+                coordinate_lock_look_mode=self._coordinate_lock_look_mode,
                 coordinate_locks=tuple(self._coordinate_locks),
             )
 
@@ -145,7 +150,7 @@ class RuntimeControls:
                 coordinate_lock_auto_hit_max_seconds=(
                     self._coordinate_lock_auto_hit_max_seconds
                 ),
-                coordinate_lock_look_at_enabled=self._coordinate_lock_look_at_enabled,
+                coordinate_lock_look_mode=self._coordinate_lock_look_mode,
                 coordinate_locks=tuple(self._coordinate_locks),
             )
 
@@ -250,9 +255,10 @@ class RuntimeControls:
             self._coordinate_lock_auto_hit_min_seconds = min_seconds
             self._coordinate_lock_auto_hit_max_seconds = max_seconds
 
-    def set_coordinate_lock_look_at_enabled(self, enabled: bool) -> None:
+    def set_coordinate_lock_look_mode(self, mode: str) -> None:
+        validated = validate_coordinate_lock_look_mode(mode)
         with self._lock:
-            self._coordinate_lock_look_at_enabled = enabled
+            self._coordinate_lock_look_mode = validated
 
     def get_coordinate_locks(self) -> tuple[CoordinateLockConfig, ...]:
         with self._lock:

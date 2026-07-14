@@ -10,7 +10,11 @@ import threading
 from typing import Any, Callable
 from urllib.request import urlopen
 
-from holoquiz.config import BotConfig, CoordinateLockConfig
+from holoquiz.config import (
+    COORDINATE_LOCK_LOOK_LOCK,
+    BotConfig,
+    CoordinateLockConfig,
+)
 from holoquiz.keyboard_coordinator import (
     KeyboardInputCoordinator,
     keyboard_input_coordinator,
@@ -476,7 +480,10 @@ class CoordinateLockWorker:
         position: PlayerPosition,
         lock: CoordinateLockConfig,
     ) -> None:
-        look_at_lock = self.controls.get_config().coordinate_lock_look_at_enabled
+        look_at_lock = (
+            self.controls.get_config().coordinate_lock_look_mode
+            == COORDINATE_LOCK_LOOK_LOCK
+        )
         key = "w" if look_at_lock else movement_key_for_target(position, lock)
         should_jump = lock.y - position.y > 0.6 or self._stalled_checks >= 3
         keys = ([key] if key else []) + (["space"] if should_jump else [])

@@ -20,6 +20,8 @@ from holoquiz.chat_sender import ChatSender
 from holoquiz.config import (
     BotConfig,
     ChatTriggerConfig,
+    COORDINATE_LOCK_LOOK_LOCK,
+    COORDINATE_LOCK_LOOK_NONE,
     CoordinateLockConfig,
     ScreenPhraseRegionConfig,
     load_config,
@@ -710,7 +712,7 @@ class HoloQuizControlPanel:
                 auto_hit_enabled=config.coordinate_lock_auto_hit_enabled,
                 auto_hit_min_seconds=config.coordinate_lock_auto_hit_min_seconds,
                 auto_hit_max_seconds=config.coordinate_lock_auto_hit_max_seconds,
-                look_at_enabled=config.coordinate_lock_look_at_enabled,
+                look_mode=config.coordinate_lock_look_mode,
             )
         self.controller = ControlPanelController(self.controls)
         self.log_queue: queue.Queue[str] = queue.Queue()
@@ -764,7 +766,7 @@ class HoloQuizControlPanel:
             value=f"{config.coordinate_lock_auto_hit_max_seconds:g}"
         )
         self.coordinate_lock_look_at_var = tk.BooleanVar(
-            value=config.coordinate_lock_look_at_enabled
+            value=config.coordinate_lock_look_mode == COORDINATE_LOCK_LOOK_LOCK
         )
         self.coordinate_lock_name_var = tk.StringVar(value="")
         self.coordinate_lock_x_var = tk.StringVar(value="")
@@ -1896,8 +1898,10 @@ class HoloQuizControlPanel:
             self._save_coordinate_lock_settings()
 
     def _on_coordinate_lock_look_at_toggle(self) -> None:
-        self.controls.set_coordinate_lock_look_at_enabled(
-            self.coordinate_lock_look_at_var.get()
+        self.controls.set_coordinate_lock_look_mode(
+            COORDINATE_LOCK_LOOK_LOCK
+            if self.coordinate_lock_look_at_var.get()
+            else COORDINATE_LOCK_LOOK_NONE
         )
         self._save_coordinate_lock_settings()
 
@@ -2107,7 +2111,7 @@ class HoloQuizControlPanel:
             auto_hit_max_seconds=(
                 self.controls.get_config().coordinate_lock_auto_hit_max_seconds
             ),
-            look_at_enabled=self.coordinate_lock_look_at_var.get(),
+            look_mode=self.controls.get_config().coordinate_lock_look_mode,
         )
 
     def _chat_trigger_by_id(self, trigger_id: str | None) -> ChatTriggerConfig | None:

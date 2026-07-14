@@ -1,4 +1,8 @@
-from holoquiz.config import BotConfig, CoordinateLockConfig
+from holoquiz.config import (
+    BotConfig,
+    COORDINATE_LOCK_LOOK_TARGET,
+    CoordinateLockConfig,
+)
 from holoquiz.runtime import (
     FIND_ANSWER_FUNCTION,
     SCREEN_PHRASE_WATCHER_FUNCTION,
@@ -77,7 +81,7 @@ def test_runtime_controls_track_coordinate_lock_settings():
     controls.set_coordinate_lock_enabled(True)
     controls.set_coordinate_lock_auto_hit_enabled(True)
     controls.set_coordinate_lock_auto_hit_range(0.1, 0.5)
-    controls.set_coordinate_lock_look_at_enabled(True)
+    controls.set_coordinate_lock_look_mode(COORDINATE_LOCK_LOOK_TARGET)
     controls.set_coordinate_locks([lock])
 
     assert controls.get_config().coordinate_lock_enabled is True
@@ -86,9 +90,21 @@ def test_runtime_controls_track_coordinate_lock_settings():
     assert controls.get_config().coordinate_lock_auto_hit_max_seconds == 0.5
     assert controls.snapshot().coordinate_lock_auto_hit_min_seconds == 0.1
     assert controls.snapshot().coordinate_lock_auto_hit_max_seconds == 0.5
-    assert controls.get_config().coordinate_lock_look_at_enabled is True
+    assert controls.get_config().coordinate_lock_look_mode == "target"
+    assert controls.snapshot().coordinate_lock_look_mode == "target"
     assert controls.get_coordinate_locks() == (lock,)
     assert controls.snapshot().coordinate_locks == (lock,)
+
+
+def test_runtime_controls_reject_invalid_coordinate_lock_look_mode():
+    controls = RuntimeControls.from_config(BotConfig())
+
+    try:
+        controls.set_coordinate_lock_look_mode("sideways")
+    except ValueError as error:
+        assert "look mode" in str(error).casefold()
+    else:
+        raise AssertionError("Expected an invalid look mode to fail")
 
 
 def test_runtime_controls_allow_only_one_enabled_coordinate_lock():

@@ -134,7 +134,7 @@ def test_auto_hit_delay_uses_configured_range():
 
 
 class FakePlayerClient:
-    url = "http://localhost:8025/data/player"
+    url = "http://127.0.0.1:8026/data/player"
 
     def __init__(self, position):
         self.position = position
@@ -286,7 +286,7 @@ def test_worker_looks_at_lock_and_moves_forward_when_enabled():
     controls = RuntimeControls.from_config(
         BotConfig(
             coordinate_lock_enabled=True,
-            coordinate_lock_look_at_enabled=True,
+            coordinate_lock_look_mode="lock",
             coordinate_locks=(lock,),
         )
     )
