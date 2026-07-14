@@ -285,6 +285,7 @@ class CoordinateLockWorker:
         *,
         player_client: PlayerDataClient | None = None,
         container_client: ContainerDataClient | None = None,
+        entity_client: NearbyEntityClient | None = None,
         pyautogui_module: Any | None = None,
         foreground_provider: Callable[[], bool] = minecraft_is_foreground,
         mouse_mover: Callable[[int, int], None] | None = None,
@@ -296,6 +297,7 @@ class CoordinateLockWorker:
         self.log_queue = log_queue
         self.player_client = player_client
         self.container_client = container_client or ContainerDataClient()
+        self.entity_client = entity_client or NearbyEntityClient()
         self._pyautogui = pyautogui_module
         self._foreground_provider = foreground_provider
         self._mouse_mover = mouse_mover
@@ -304,6 +306,7 @@ class CoordinateLockWorker:
         self._input_coordinator = input_coordinator or keyboard_input_coordinator
         self._stop_event = threading.Event()
         self._auto_hit_in_range = threading.Event()
+        self._auto_hit_lock_id: str | None = None
         self._thread: threading.Thread | None = None
         self._auto_hit_thread: threading.Thread | None = None
         self._last_status = ""
@@ -312,12 +315,13 @@ class CoordinateLockWorker:
         self._mouse_counts_per_degree = 64.0
         self._last_camera_command = 0
         self._last_camera_heading: float | None = None
+        self._last_auto_hit_error = ""
 
     def start(self) -> None:
         if self.is_running():
             return
         self._stop_event.clear()
-        self._auto_hit_in_range.clear()
+        self._clear_auto_hit_state()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._auto_hit_thread = threading.Thread(
             target=self._run_auto_hit,
@@ -339,7 +343,7 @@ class CoordinateLockWorker:
             else:
                 self._last_position = None
                 self._stalled_checks = 0
-                self._auto_hit_in_range.clear()
+                self._clear_auto_hit_state()
             self._stop_event.wait(self.poll_seconds)
 
     def _run_auto_hit(self) -> None:
@@ -354,7 +358,7 @@ class CoordinateLockWorker:
             delay = (
                 auto_hit_delay_seconds(self.controls.get_config())
                 if clicked
-                else 0.01
+                else self.poll_seconds
             )
             self._stop_event.wait(delay)
 
@@ -373,11 +377,11 @@ class CoordinateLockWorker:
             and config.coordinate_lock_enabled
             and any(lock.enabled for lock in config.coordinate_locks)
         ):
-            self._auto_hit_in_range.clear()
+            self._clear_auto_hit_state()
             return
         try:
             if self.container_client.is_open():
-                self._auto_hit_in_range.clear()
+                self._clear_auto_hit_state()
                 self._last_position = None
                 self._stalled_checks = 0
                 self._status(
@@ -388,11 +392,11 @@ class CoordinateLockWorker:
             self._update_camera_calibration(position)
             nearest = nearest_enabled_lock(position, config.coordinate_locks)
             if nearest is None:
-                self._auto_hit_in_range.clear()
+                self._clear_auto_hit_state()
                 return
             lock, distance = nearest
             if distance > lock.active_area:
-                self._auto_hit_in_range.clear()
+                self._clear_auto_hit_state()
                 self._status(
                     f"[coordinate-lock] Player is {distance:.1f} blocks from "
                     f"{lock.name or lock.id}, outside its {lock.active_area:g}-block "
@@ -400,9 +404,10 @@ class CoordinateLockWorker:
                 )
                 return
             if config.coordinate_lock_auto_hit_enabled:
+                self._auto_hit_lock_id = lock.id
                 self._auto_hit_in_range.set()
             else:
-                self._auto_hit_in_range.clear()
+                self._clear_auto_hit_state()
             if distance <= config.coordinate_lock_tolerance:
                 self._status(
                     "[coordinate-lock] Position locked at "
@@ -422,8 +427,12 @@ class CoordinateLockWorker:
             self._last_position = position
             self._last_status = ""
         except Exception as error:
-            self._auto_hit_in_range.clear()
+            self._clear_auto_hit_state()
             self._status(f"[coordinate-lock-error] {error}")
+
+    def _clear_auto_hit_state(self) -> None:
+        self._auto_hit_in_range.clear()
+        self._auto_hit_lock_id = None
 
     def _client(self, config: BotConfig) -> PlayerDataClient:
         if self.player_client is None or self.player_client.url != config.player_data_url:
@@ -529,32 +538,80 @@ class CoordinateLockWorker:
 
     def _auto_hit_once(self) -> bool:
         config = self.controls.get_config()
+        lock = self._active_auto_hit_lock(config)
         if not (
             self._auto_hit_in_range.is_set()
             and config.program_enabled
             and config.coordinate_lock_enabled
             and config.coordinate_lock_auto_hit_enabled
-            and any(lock.enabled for lock in config.coordinate_locks)
+            and lock is not None
         ):
             return False
         if not self._foreground_provider():
             return False
+        # Re-check at the click boundary. The location polling thread may have
+        # last observed a closed container just before the inventory opened.
+        try:
+            if self.container_client.is_open():
+                self._clear_auto_hit_state()
+                return False
+        except Exception as error:
+            # Clicking is unsafe when the current container state is unknown.
+            self._status(f"[coordinate-lock-auto-hit-container-error] {error}")
+            return False
+        try:
+            if not self._has_auto_hit_target(lock):
+                return False
+        except Exception as error:
+            self._auto_hit_error(error)
+            return False
         with self._input_coordinator.movement_session() as input_allowed:
             if not input_allowed:
-                return False
-            # Re-check at the click boundary. The location polling thread may have
-            # last observed a closed container just before the inventory opened.
-            try:
-                if self.container_client.is_open():
-                    self._auto_hit_in_range.clear()
-                    return False
-            except Exception as error:
-                # Clicking is unsafe when the current container state is unknown.
-                self._status(f"[coordinate-lock-auto-hit-container-error] {error}")
                 return False
             pyautogui = self._pyautogui or self._load_pyautogui()
             pyautogui.click(button="left", _pause=False)
             return True
+
+    def _active_auto_hit_lock(
+        self,
+        config: BotConfig,
+    ) -> CoordinateLockConfig | None:
+        return next(
+            (
+                lock
+                for lock in config.coordinate_locks
+                if lock.enabled and lock.id == self._auto_hit_lock_id
+            ),
+            None,
+        )
+
+    def _has_auto_hit_target(self, lock: CoordinateLockConfig) -> bool:
+        players = self.entity_client.get_players() if lock.auto_hit_players else ()
+        mobs = self.entity_client.get_mobs() if lock.auto_hit_mobs else ()
+        self._last_auto_hit_error = ""
+        player_match = any(
+            entity_matches_auto_hit_target(
+                entity,
+                target_name=lock.auto_hit_target_name,
+                name_attribute="custom_name",
+            )
+            for entity in players
+        )
+        mob_match = any(
+            entity_matches_auto_hit_target(
+                entity,
+                target_name=lock.auto_hit_target_name,
+                name_attribute="name",
+            )
+            for entity in mobs
+        )
+        return player_match or mob_match
+
+    def _auto_hit_error(self, error: Exception) -> None:
+        message = f"[coordinate-lock-auto-hit-target-error] {error}"
+        if message != self._last_auto_hit_error:
+            self.log_queue.put(message)
+            self._last_auto_hit_error = message
 
     def _load_pyautogui(self) -> Any:
         import pyautogui

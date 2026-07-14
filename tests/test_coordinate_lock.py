@@ -151,6 +151,26 @@ class FakeContainerClient:
         return self.open
 
 
+class FakeNearbyEntityClient:
+    def __init__(self, *, players=(), mobs=(), error=None):
+        self.players = tuple(players)
+        self.mobs = tuple(mobs)
+        self.error = error
+        self.calls = []
+
+    def get_players(self):
+        self.calls.append("players")
+        if self.error is not None:
+            raise self.error
+        return self.players
+
+    def get_mobs(self):
+        self.calls.append("mobs")
+        if self.error is not None:
+            raise self.error
+        return self.mobs
+
+
 class FakePyAutoGui:
     def __init__(self):
         self.events = []
@@ -491,7 +511,7 @@ def test_worker_pauses_while_inventory_is_open_then_resumes():
     assert keys.events == [("down", "w"), ("up", "w")]
 
 
-def test_worker_auto_hits_within_the_enabled_coordinate_range():
+def test_worker_auto_hit_requires_a_nearby_entity_even_inside_coordinate_area():
     lock = CoordinateLockConfig("home", 0, 64, 0)
     controls = RuntimeControls.from_config(
         BotConfig(
@@ -501,19 +521,127 @@ def test_worker_auto_hits_within_the_enabled_coordinate_range():
         )
     )
     keys = FakePyAutoGui()
+    entities = FakeNearbyEntityClient()
     worker = CoordinateLockWorker(
         controls,
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(49, 64, 0)),
         container_client=FakeContainerClient(),
+        entity_client=entities,
         pyautogui_module=keys,
         foreground_provider=lambda: True,
     )
 
     worker.check_once()
-    worker._auto_hit_once()
+    assert worker._auto_hit_once() is False
 
-    assert keys.events == [("down", "d"), ("up", "d"), ("click", "left")]
+    assert entities.calls == ["players", "mobs"]
+    assert ("click", "left") not in keys.events
+
+
+def test_worker_auto_hits_for_selected_player_custom_name():
+    lock = CoordinateLockConfig(
+        "home",
+        0,
+        64,
+        0,
+        auto_hit_players=True,
+        auto_hit_mobs=False,
+        auto_hit_target_name="[Lv 6]Tatsunoko",
+    )
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(lock,),
+        )
+    )
+    keys = FakePyAutoGui()
+    entities = FakeNearbyEntityClient(
+        players=(NearbyEntity(5.0, "Alex", "[LV 6]TATSUNOKO"),)
+    )
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
+        entity_client=entities,
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+
+    worker.check_once()
+
+    assert worker._auto_hit_once() is True
+    assert entities.calls == ["players"]
+    assert keys.events == [("click", "left")]
+
+
+def test_worker_auto_hits_for_selected_mob_name_when_both_types_are_enabled():
+    lock = CoordinateLockConfig(
+        "home", 0, 64, 0, auto_hit_target_name="Zombie"
+    )
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(lock,),
+        )
+    )
+    entities = FakeNearbyEntityClient(
+        players=(NearbyEntity(2.0, "Alex", "Not Zombie"),),
+        mobs=(NearbyEntity(4.0, "zOmBiE"),),
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
+        entity_client=entities,
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+
+    worker.check_once()
+
+    assert worker._auto_hit_once() is True
+    assert entities.calls == ["players", "mobs"]
+    assert keys.events == [("click", "left")]
+
+
+def test_worker_fails_closed_and_deduplicates_nearby_api_errors():
+    lock = CoordinateLockConfig("home", 0, 64, 0)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(lock,),
+        )
+    )
+    logs = queue.Queue()
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        logs,
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=FakeContainerClient(),
+        entity_client=FakeNearbyEntityClient(
+            error=OSError("entity API unavailable")
+        ),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+
+    worker.check_once()
+    assert worker._auto_hit_once() is False
+    assert worker._auto_hit_once() is False
+
+    messages = []
+    while not logs.empty():
+        messages.append(logs.get_nowait())
+    assert sum("entity API unavailable" in message for message in messages) == 1
+    assert keys.events == []
 
 
 def test_worker_does_not_auto_hit_outside_the_coordinate_range():
@@ -611,6 +739,7 @@ def test_worker_skips_auto_hit_when_inventory_check_fails():
         pyautogui_module=keys,
         foreground_provider=lambda: True,
     )
+    worker._auto_hit_lock_id = "home"
     worker._auto_hit_in_range.set()
 
     assert worker._auto_hit_once() is False
@@ -632,6 +761,9 @@ def test_auto_hit_click_loop_is_independent_from_location_polling():
         queue.Queue(),
         player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
         container_client=FakeContainerClient(),
+        entity_client=FakeNearbyEntityClient(
+            players=(NearbyEntity(2.0, "Alex", None),)
+        ),
         pyautogui_module=keys,
         foreground_provider=lambda: True,
     )
