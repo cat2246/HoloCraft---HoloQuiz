@@ -46,5 +46,13 @@ class KeyboardInputCoordinator:
             if acquired:
                 self._input_lock.release()
 
+    @contextmanager
+    def click_session(self) -> Iterator[bool]:
+        self._state_lock.acquire()
+        try:
+            yield self._pending_chat_sessions == 0
+        finally:
+            self._state_lock.release()
+
 
 keyboard_input_coordinator = KeyboardInputCoordinator()
