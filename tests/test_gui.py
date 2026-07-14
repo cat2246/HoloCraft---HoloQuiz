@@ -240,6 +240,9 @@ def test_coordinate_form_builds_target_with_custom_active_area():
     panel.coordinate_lock_y_var = SimpleNamespace(get=lambda: "64")
     panel.coordinate_lock_z_var = SimpleNamespace(get=lambda: "-20")
     panel.coordinate_lock_active_area_var = SimpleNamespace(get=lambda: "75")
+    panel.coordinate_lock_auto_hit_players_var = SimpleNamespace(get=lambda: True)
+    panel.coordinate_lock_auto_hit_mobs_var = SimpleNamespace(get=lambda: True)
+    panel.coordinate_lock_target_name_var = SimpleNamespace(get=lambda: "")
     panel.coordinate_lock_editing_id = None
     panel.controls = RuntimeControls.from_config(BotConfig())
 
@@ -257,6 +260,9 @@ def test_coordinate_form_rejects_non_positive_active_area():
     panel.coordinate_lock_y_var = SimpleNamespace(get=lambda: "64")
     panel.coordinate_lock_z_var = SimpleNamespace(get=lambda: "-20")
     panel.coordinate_lock_active_area_var = SimpleNamespace(get=lambda: "0")
+    panel.coordinate_lock_auto_hit_players_var = SimpleNamespace(get=lambda: True)
+    panel.coordinate_lock_auto_hit_mobs_var = SimpleNamespace(get=lambda: True)
+    panel.coordinate_lock_target_name_var = SimpleNamespace(get=lambda: "")
     panel.coordinate_lock_editing_id = None
     panel.controls = RuntimeControls.from_config(BotConfig())
 
@@ -264,6 +270,102 @@ def test_coordinate_form_rejects_non_positive_active_area():
 
     assert result.ok is False
     assert result.message == "Active area must be greater than 0."
+
+
+def test_coordinate_form_builds_per_coordinate_auto_hit_targeting():
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.coordinate_lock_name_var = SimpleNamespace(get=lambda: "Farm")
+    panel.coordinate_lock_x_var = SimpleNamespace(get=lambda: "10")
+    panel.coordinate_lock_y_var = SimpleNamespace(get=lambda: "64")
+    panel.coordinate_lock_z_var = SimpleNamespace(get=lambda: "-20")
+    panel.coordinate_lock_active_area_var = SimpleNamespace(get=lambda: "75")
+    panel.coordinate_lock_auto_hit_players_var = SimpleNamespace(get=lambda: True)
+    panel.coordinate_lock_auto_hit_mobs_var = SimpleNamespace(get=lambda: False)
+    panel.coordinate_lock_target_name_var = SimpleNamespace(
+        get=lambda: "  [Lv 6]Tatsunoko  "
+    )
+    panel.coordinate_lock_editing_id = None
+    panel.controls = RuntimeControls.from_config(BotConfig())
+
+    result = panel._build_coordinate_lock_from_form()
+
+    assert result.ok is True
+    assert result.value is not None
+    assert result.value.name == "Farm"
+    assert result.value.active_area == 75
+    assert result.value.auto_hit_players is True
+    assert result.value.auto_hit_mobs is False
+    assert result.value.auto_hit_target_name == "[Lv 6]Tatsunoko"
+
+
+def test_coordinate_form_requires_at_least_one_auto_hit_target_type():
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.coordinate_lock_name_var = SimpleNamespace(get=lambda: "Farm")
+    panel.coordinate_lock_x_var = SimpleNamespace(get=lambda: "10")
+    panel.coordinate_lock_y_var = SimpleNamespace(get=lambda: "64")
+    panel.coordinate_lock_z_var = SimpleNamespace(get=lambda: "-20")
+    panel.coordinate_lock_active_area_var = SimpleNamespace(get=lambda: "75")
+    panel.coordinate_lock_auto_hit_players_var = SimpleNamespace(get=lambda: False)
+    panel.coordinate_lock_auto_hit_mobs_var = SimpleNamespace(get=lambda: False)
+    panel.coordinate_lock_target_name_var = SimpleNamespace(get=lambda: "")
+    panel.coordinate_lock_editing_id = None
+    panel.controls = RuntimeControls.from_config(BotConfig())
+
+    result = panel._build_coordinate_lock_from_form()
+
+    assert result.ok is False
+    assert result.message == "Select Players, Mobs, or both for Auto Hit."
+
+
+def test_coordinate_target_summary_describes_saved_settings():
+    assert gui.coordinate_lock_target_summary(
+        CoordinateLockConfig("both", 1, 2, 3)
+    ) == "Players + Mobs"
+    assert gui.coordinate_lock_target_summary(
+        CoordinateLockConfig(
+            "mobs", 1, 2, 3, auto_hit_players=False, auto_hit_mobs=True
+        )
+    ) == "Mobs"
+
+
+def test_edit_coordinate_loads_per_coordinate_auto_hit_targeting():
+    class RecordingVar:
+        def __init__(self):
+            self.value = None
+
+        def set(self, value):
+            self.value = value
+
+    lock = CoordinateLockConfig(
+        "farm",
+        1,
+        64,
+        2,
+        name="Farm",
+        auto_hit_players=False,
+        auto_hit_mobs=True,
+        auto_hit_target_name="Zombie",
+    )
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.controls = RuntimeControls.from_config(BotConfig(coordinate_locks=(lock,)))
+    panel.coordinate_lock_name_var = RecordingVar()
+    panel.coordinate_lock_x_var = RecordingVar()
+    panel.coordinate_lock_y_var = RecordingVar()
+    panel.coordinate_lock_z_var = RecordingVar()
+    panel.coordinate_lock_active_area_var = RecordingVar()
+    panel.coordinate_lock_auto_hit_players_var = RecordingVar()
+    panel.coordinate_lock_auto_hit_mobs_var = RecordingVar()
+    panel.coordinate_lock_target_name_var = RecordingVar()
+    panel.coordinate_lock_submit_button = SimpleNamespace(
+        configure=lambda **_kwargs: None
+    )
+    panel.coordinate_lock_status_var = RecordingVar()
+
+    panel._on_edit_coordinate_lock("farm")
+
+    assert panel.coordinate_lock_auto_hit_players_var.value is False
+    assert panel.coordinate_lock_auto_hit_mobs_var.value is True
+    assert panel.coordinate_lock_target_name_var.value == "Zombie"
 
 
 def test_screen_phrase_worker_debug_logs_ocr_details():

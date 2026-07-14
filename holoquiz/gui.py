@@ -87,6 +87,16 @@ class CoordinateLockBuildResult:
     value: CoordinateLockConfig | None = None
 
 
+def coordinate_lock_target_summary(lock: CoordinateLockConfig) -> str:
+    if lock.auto_hit_players and lock.auto_hit_mobs:
+        return "Players + Mobs"
+    if lock.auto_hit_players:
+        return "Players"
+    if lock.auto_hit_mobs:
+        return "Mobs"
+    return "None"
+
+
 class ControlPanelController:
     def __init__(
         self,
@@ -763,9 +773,12 @@ class HoloQuizControlPanel:
         self.coordinate_lock_active_area_var = tk.StringVar(
             value=f"{CoordinateLockConfig.active_area:g}"
         )
+        self.coordinate_lock_auto_hit_players_var = tk.BooleanVar(value=True)
+        self.coordinate_lock_auto_hit_mobs_var = tk.BooleanVar(value=True)
+        self.coordinate_lock_target_name_var = tk.StringVar(value="")
         self.coordinate_lock_editing_id: str | None = None
         self.coordinate_lock_status_var = tk.StringVar(
-            value="Select a saved target or add a new coordinate."
+            value="Select a saved coordinate or add a new coordinate."
         )
         self.function_vars: dict[str, tk.BooleanVar] = {}
         self.screen_phrase_trigger_var.trace_add(
@@ -1262,7 +1275,7 @@ class HoloQuizControlPanel:
 
         for column, (label, variable) in enumerate(
             (
-                ("Target name", self.coordinate_lock_name_var),
+                ("Coordinate Name", self.coordinate_lock_name_var),
                 ("X", self.coordinate_lock_x_var),
                 ("Y", self.coordinate_lock_y_var),
                 ("Z", self.coordinate_lock_z_var),
@@ -1300,8 +1313,35 @@ class HoloQuizControlPanel:
             command=self._on_lock_here,
         ).grid(row=0, column=1)
 
+        auto_hit_target_row = ttk.Frame(coordinate_lock_form)
+        auto_hit_target_row.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        ttk.Label(
+            auto_hit_target_row,
+            text="Auto hit targets",
+            style="FieldLabel.TLabel",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Checkbutton(
+            auto_hit_target_row,
+            text="Players",
+            variable=self.coordinate_lock_auto_hit_players_var,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 12))
+        ttk.Checkbutton(
+            auto_hit_target_row,
+            text="Mobs",
+            variable=self.coordinate_lock_auto_hit_mobs_var,
+        ).grid(row=0, column=2, sticky="w", padx=(0, 18))
+        ttk.Label(auto_hit_target_row, text="Target Name").grid(
+            row=0, column=3, sticky="w", padx=(0, 6)
+        )
+        ttk.Entry(
+            auto_hit_target_row,
+            textvariable=self.coordinate_lock_target_name_var,
+            width=30,
+        ).grid(row=0, column=4, sticky="ew")
+        auto_hit_target_row.columnconfigure(4, weight=1)
+
         status_row = ttk.Frame(coordinate_lock_form)
-        status_row.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        status_row.grid(row=4, column=0, sticky="ew", pady=(12, 0))
         ttk.Label(
             status_row,
             text="Status",
@@ -1324,18 +1364,29 @@ class HoloQuizControlPanel:
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
         self.coordinate_lock_tree = ttk.Treeview(
             coordinate_lock_list,
-            columns=("status", "name", "x", "y", "z", "active_area"),
+            columns=(
+                "status",
+                "name",
+                "target_types",
+                "target_name",
+                "x",
+                "y",
+                "z",
+                "active_area",
+            ),
             show="headings",
             selectmode="browse",
             height=6,
         )
         for column, heading, width, stretch in (
-            ("status", "Status", 80, False),
-            ("name", "Name", 200, True),
-            ("x", "X", 100, True),
-            ("y", "Y", 100, True),
-            ("z", "Z", 100, True),
-            ("active_area", "Active area", 90, False),
+            ("status", "Status", 75, False),
+            ("name", "Coordinate Name", 130, True),
+            ("target_types", "Targets", 110, False),
+            ("target_name", "Target Name", 170, True),
+            ("x", "X", 75, False),
+            ("y", "Y", 75, False),
+            ("z", "Z", 75, False),
+            ("active_area", "Active area", 85, False),
         ):
             self.coordinate_lock_tree.heading(column, text=heading)
             self.coordinate_lock_tree.column(
@@ -1881,12 +1932,22 @@ class HoloQuizControlPanel:
         self.coordinate_lock_active_area_var.set(
             f"{CoordinateLockConfig.active_area:g}"
         )
+        self.coordinate_lock_auto_hit_players_var.set(True)
+        self.coordinate_lock_auto_hit_mobs_var.set(True)
+        self.coordinate_lock_target_name_var.set("")
         self.coordinate_lock_submit_button.configure(text="Add coordinate")
 
     def _build_coordinate_lock_from_form(self) -> CoordinateLockBuildResult:
         name = self.coordinate_lock_name_var.get().strip()
         if not name:
             return CoordinateLockBuildResult(False, "Enter a name for this coordinate.")
+        auto_hit_players = self.coordinate_lock_auto_hit_players_var.get()
+        auto_hit_mobs = self.coordinate_lock_auto_hit_mobs_var.get()
+        if not auto_hit_players and not auto_hit_mobs:
+            return CoordinateLockBuildResult(
+                False, "Select Players, Mobs, or both for Auto Hit."
+            )
+        auto_hit_target_name = self.coordinate_lock_target_name_var.get().strip()
         try:
             x = float(self.coordinate_lock_x_var.get().strip())
             y = float(self.coordinate_lock_y_var.get().strip())
@@ -1911,6 +1972,9 @@ class HoloQuizControlPanel:
                 enabled=existing.enabled if existing is not None else True,
                 name=name,
                 active_area=active_area,
+                auto_hit_players=auto_hit_players,
+                auto_hit_mobs=auto_hit_mobs,
+                auto_hit_target_name=auto_hit_target_name,
             ),
         )
 
@@ -1936,6 +2000,9 @@ class HoloQuizControlPanel:
         self.coordinate_lock_y_var.set(f"{lock.y:g}")
         self.coordinate_lock_z_var.set(f"{lock.z:g}")
         self.coordinate_lock_active_area_var.set(f"{lock.active_area:g}")
+        self.coordinate_lock_auto_hit_players_var.set(lock.auto_hit_players)
+        self.coordinate_lock_auto_hit_mobs_var.set(lock.auto_hit_mobs)
+        self.coordinate_lock_target_name_var.set(lock.auto_hit_target_name)
         self.coordinate_lock_submit_button.configure(text="Save coordinate")
         self.coordinate_lock_status_var.set("Editing coordinate.")
 
@@ -1994,6 +2061,8 @@ class HoloQuizControlPanel:
                 values=(
                     "Active" if lock.enabled else "Inactive",
                     lock.name or "Unnamed coordinate",
+                    coordinate_lock_target_summary(lock),
+                    lock.auto_hit_target_name or "Any",
                     f"{lock.x:g}",
                     f"{lock.y:g}",
                     f"{lock.z:g}",
