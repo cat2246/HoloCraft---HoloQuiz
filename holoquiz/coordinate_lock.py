@@ -12,6 +12,7 @@ from urllib.request import urlopen
 
 from holoquiz.config import (
     COORDINATE_LOCK_LOOK_LOCK,
+    COORDINATE_LOCK_LOOK_TARGET,
     BotConfig,
     CoordinateLockConfig,
 )
@@ -452,6 +453,7 @@ class CoordinateLockWorker:
         self._last_camera_command = 0
         self._last_camera_heading: float | None = None
         self._last_auto_hit_error = ""
+        self._last_look_target_error = ""
 
     def start(self) -> None:
         if self.is_running():
@@ -544,7 +546,12 @@ class CoordinateLockWorker:
                 self._auto_hit_in_range.set()
             else:
                 self._clear_auto_hit_state()
-            if distance <= config.coordinate_lock_tolerance:
+            move_required = distance > config.coordinate_lock_tolerance
+            if (
+                not move_required
+                and config.coordinate_lock_look_mode
+                != COORDINATE_LOCK_LOOK_TARGET
+            ):
                 self._status(
                     "[coordinate-lock] Position locked at "
                     f"{lock.x:g}, {lock.y:g}, {lock.z:g}."
@@ -558,10 +565,18 @@ class CoordinateLockWorker:
                 )
                 return
 
-            self._update_stall_state(position)
-            self._move_toward(position, lock)
+            if move_required:
+                self._update_stall_state(position)
+            self._act(position, lock, move_required=move_required)
             self._last_position = position
-            self._last_status = ""
+            if move_required:
+                self._last_status = ""
+            else:
+                self._status(
+                    "[coordinate-lock] Position locked at "
+                    f"{lock.x:g}, {lock.y:g}, {lock.z:g}."
+                )
+                self._stalled_checks = 0
         except Exception as error:
             self._clear_auto_hit_state()
             self._status(f"[coordinate-lock-error] {error}")
@@ -607,20 +622,96 @@ class CoordinateLockWorker:
             self._mouse_counts_per_degree * 0.65 + observed_ratio * 0.35
         )
 
-    def _move_toward(
+    def _act(
         self,
         position: PlayerPosition,
         lock: CoordinateLockConfig,
+        *,
+        move_required: bool,
     ) -> None:
-        look_at_lock = (
-            self.controls.get_config().coordinate_lock_look_mode
-            == COORDINATE_LOCK_LOOK_LOCK
+        mode = self.controls.get_config().coordinate_lock_look_mode
+        target = (
+            self._look_target(lock)
+            if mode == COORDINATE_LOCK_LOOK_TARGET
+            else None
         )
-        key = "w" if look_at_lock else movement_key_for_target(position, lock)
-        should_jump = lock.y - position.y > 0.6 or self._stalled_checks >= 3
+        fallback_to_lock = mode == COORDINATE_LOCK_LOOK_LOCK or (
+            mode == COORDINATE_LOCK_LOOK_TARGET and target is None
+        )
+
+        if not move_required:
+            key = None
+        elif fallback_to_lock:
+            key = "w"
+        else:
+            key = movement_key_for_target(position, lock)
+
+        if target is not None:
+            try:
+                mouse_x, mouse_y = camera_turn_pixels_for_entity(
+                    position,
+                    target,
+                    mouse_counts_per_degree=self._mouse_counts_per_degree,
+                )
+                self._last_look_target_error = ""
+            except ValueError as error:
+                self._report_look_target_error(error)
+                fallback_to_lock = True
+                key = "w" if move_required else None
+                mouse_x = camera_turn_pixels_for_target(
+                    position,
+                    lock,
+                    mouse_counts_per_degree=self._mouse_counts_per_degree,
+                )
+                mouse_y = 0
+        elif fallback_to_lock:
+            mouse_x = camera_turn_pixels_for_target(
+                position,
+                lock,
+                mouse_counts_per_degree=self._mouse_counts_per_degree,
+            )
+            mouse_y = 0
+        else:
+            mouse_x = mouse_y = 0
+
+        should_jump = move_required and (
+            lock.y - position.y > 0.6 or self._stalled_checks >= 3
+        )
         keys = ([key] if key else []) + (["space"] if should_jump else [])
-        if not keys:
+        if not keys and not mouse_x and not mouse_y:
             return
+
+        self._apply_movement_and_camera(
+            keys,
+            mouse_x,
+            mouse_y,
+            position,
+        )
+
+    def _look_target(self, lock: CoordinateLockConfig) -> NearbyEntity | None:
+        try:
+            players = (
+                self.entity_client.get_players() if lock.auto_hit_players else ()
+            )
+            mobs = self.entity_client.get_mobs() if lock.auto_hit_mobs else ()
+            return nearest_look_target(lock, players=players, mobs=mobs)
+        except Exception as error:
+            self._report_look_target_error(error)
+            return None
+
+    def _report_look_target_error(self, error: Exception) -> None:
+        message = f"[coordinate-lock-look-target-error] {error}"
+        if message != self._last_look_target_error:
+            self.log_queue.put(message)
+            self._last_look_target_error = message
+
+    def _apply_movement_and_camera(
+        self,
+        keys: list[str],
+        mouse_x: int,
+        mouse_y: int,
+        position: PlayerPosition,
+    ) -> None:
 
         with self._input_coordinator.movement_session() as movement_allowed:
             if not movement_allowed:
@@ -631,17 +722,8 @@ class CoordinateLockWorker:
                 for pressed_key in keys:
                     pyautogui.keyDown(pressed_key)
                     pressed_keys.append(pressed_key)
-                mouse_x = (
-                    camera_turn_pixels_for_target(
-                        position,
-                        lock,
-                        mouse_counts_per_degree=self._mouse_counts_per_degree,
-                    )
-                    if look_at_lock
-                    else 0
-                )
-                if mouse_x:
-                    self._smooth_camera_turn(mouse_x, pyautogui)
+                if mouse_x or mouse_y:
+                    self._smooth_camera_turn(mouse_x, mouse_y, pyautogui)
                     self._last_camera_command = mouse_x
                     self._last_camera_heading = position.heading
                 else:
@@ -650,20 +732,28 @@ class CoordinateLockWorker:
                 for pressed_key in reversed(pressed_keys):
                     pyautogui.keyUp(pressed_key)
 
-    def _smooth_camera_turn(self, mouse_x: int, pyautogui: Any) -> None:
+    def _smooth_camera_turn(
+        self,
+        mouse_x: int,
+        mouse_y: int,
+        pyautogui: Any,
+    ) -> None:
         # Ease out over several relative-input events so Minecraft receives a
         # continuous turn instead of one visible camera jump.
-        step_count = max(12, min(120, math.ceil(abs(mouse_x) / 18)))
+        magnitude = max(abs(mouse_x), abs(mouse_y))
+        step_count = max(12, min(120, math.ceil(magnitude / 18)))
         step_seconds = self.key_hold_seconds / step_count
-        previous_x = 0
+        previous_x = previous_y = 0
         for step in range(1, step_count + 1):
             progress = step / step_count
             eased_progress = 1.0 - (1.0 - progress) ** 2
             current_x = round(mouse_x * eased_progress)
+            current_y = round(mouse_y * eased_progress)
             step_x = current_x - previous_x
-            if step_x:
-                self._turn_camera(step_x, 0, pyautogui)
-            previous_x = current_x
+            step_y = current_y - previous_y
+            if step_x or step_y:
+                self._turn_camera(step_x, step_y, pyautogui)
+            previous_x, previous_y = current_x, current_y
             if self._stop_event.wait(step_seconds):
                 break
 

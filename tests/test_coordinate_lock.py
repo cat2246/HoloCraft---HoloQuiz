@@ -420,6 +420,168 @@ def test_worker_looks_at_lock_and_moves_forward_when_enabled():
     )
 
 
+def test_worker_tracks_closest_target_while_strafing_toward_lock():
+    lock = CoordinateLockConfig("home", 10, 64, 0, active_area=20)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_look_mode="target",
+            coordinate_locks=(lock,),
+        )
+    )
+    farther = NearbyEntity(8, "Zombie", None, x=0, y=64, z=8)
+    closest = NearbyEntity(4, "Zombie", None, x=0, y=64, z=4)
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(
+            PlayerPosition(0, 64, 0, heading=0, pitch=0)
+        ),
+        container_client=FakeContainerClient(),
+        entity_client=FakeNearbyEntityClient(mobs=(farther, closest)),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+        mouse_mover=lambda x, y: keys.events.append(("move", x, y)),
+        key_hold_seconds=0,
+    )
+
+    worker.check_once()
+
+    assert ("down", "a") in keys.events
+    movements = [event for event in keys.events if event[0] == "move"]
+    assert sum(event[1] for event in movements) == 0
+    assert sum(event[2] for event in movements) > 0
+
+
+def test_worker_keeps_tracking_target_when_already_at_lock():
+    lock = CoordinateLockConfig("home", 0, 64, 0, active_area=20)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_look_mode="target",
+            coordinate_locks=(lock,),
+        )
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(
+            PlayerPosition(0, 64, 0, heading=0, pitch=0)
+        ),
+        container_client=FakeContainerClient(),
+        entity_client=FakeNearbyEntityClient(
+            mobs=(NearbyEntity(4, "Zombie", None, x=4, y=64, z=0),)
+        ),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+        mouse_mover=lambda x, y: keys.events.append(("move", x, y)),
+        key_hold_seconds=0,
+    )
+
+    worker.check_once()
+
+    assert not any(event[0] in {"down", "up"} for event in keys.events)
+    assert any(event[0] == "move" for event in keys.events)
+
+
+def test_worker_target_mode_falls_back_to_look_at_lock_without_match():
+    lock = CoordinateLockConfig("east", 10, 64, 0, active_area=20)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_look_mode="target",
+            coordinate_locks=(lock,),
+        )
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(
+            PlayerPosition(0, 64, 0, heading=0, pitch=0)
+        ),
+        container_client=FakeContainerClient(),
+        entity_client=FakeNearbyEntityClient(),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+        mouse_mover=lambda x, y: keys.events.append(("move", x, y)),
+        key_hold_seconds=0,
+    )
+
+    worker.check_once()
+
+    assert keys.events[0] == ("down", "w")
+    assert sum(event[1] for event in keys.events if event[0] == "move") < 0
+
+
+def test_worker_target_api_error_logs_once_and_falls_back_to_lock():
+    lock = CoordinateLockConfig("east", 10, 64, 0, active_area=20)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_look_mode="target",
+            coordinate_locks=(lock,),
+        )
+    )
+    logs = queue.Queue()
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        logs,
+        player_client=FakePlayerClient(
+            PlayerPosition(0, 64, 0, heading=0, pitch=0)
+        ),
+        container_client=FakeContainerClient(),
+        entity_client=FakeNearbyEntityClient(error=OSError("offline")),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+        mouse_mover=lambda x, y: keys.events.append(("move", x, y)),
+        key_hold_seconds=0,
+    )
+
+    worker.check_once()
+    worker.check_once()
+
+    messages = []
+    while not logs.empty():
+        messages.append(logs.get_nowait())
+    assert sum("look-target-error" in message for message in messages) == 1
+    assert ("down", "w") in keys.events
+
+
+def test_worker_missing_player_pitch_falls_back_to_lock():
+    lock = CoordinateLockConfig("east", 10, 64, 0, active_area=20)
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_look_mode="target",
+            coordinate_locks=(lock,),
+        )
+    )
+    logs = queue.Queue()
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        logs,
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0, heading=0)),
+        container_client=FakeContainerClient(),
+        entity_client=FakeNearbyEntityClient(
+            mobs=(NearbyEntity(4, "Zombie", None, x=0, y=64, z=4),)
+        ),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+        mouse_mover=lambda x, y: keys.events.append(("move", x, y)),
+        key_hold_seconds=0,
+    )
+
+    worker.check_once()
+
+    assert keys.events[0] == ("down", "w")
+    assert "pitch" in logs.get_nowait().casefold()
+
+
 def test_worker_ignores_holoquiz_dry_run_and_moves_toward_nearby_lock():
     lock = CoordinateLockConfig("home", 0, 66, 10)
     controls = RuntimeControls.from_config(
