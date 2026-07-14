@@ -635,13 +635,11 @@ class CoordinateLockWorker:
             if mode == COORDINATE_LOCK_LOOK_TARGET
             else None
         )
-        fallback_to_lock = mode == COORDINATE_LOCK_LOOK_LOCK or (
-            mode == COORDINATE_LOCK_LOOK_TARGET and target is None
-        )
+        look_at_lock = mode == COORDINATE_LOCK_LOOK_LOCK
 
         if not move_required:
             key = None
-        elif fallback_to_lock:
+        elif look_at_lock:
             key = "w"
         else:
             key = movement_key_for_target(position, lock)
@@ -656,15 +654,8 @@ class CoordinateLockWorker:
                 self._last_look_target_error = ""
             except ValueError as error:
                 self._report_look_target_error(error)
-                fallback_to_lock = True
-                key = "w" if move_required else None
-                mouse_x = camera_turn_pixels_for_target(
-                    position,
-                    lock,
-                    mouse_counts_per_degree=self._mouse_counts_per_degree,
-                )
-                mouse_y = 0
-        elif fallback_to_lock:
+                mouse_x = mouse_y = 0
+        elif look_at_lock:
             mouse_x = camera_turn_pixels_for_target(
                 position,
                 lock,

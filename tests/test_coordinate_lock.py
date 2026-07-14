@@ -486,7 +486,7 @@ def test_worker_keeps_tracking_target_when_already_at_lock():
     assert any(event[0] == "move" for event in keys.events)
 
 
-def test_worker_target_mode_falls_back_to_look_at_lock_without_match():
+def test_worker_target_mode_keeps_camera_direction_without_match():
     lock = CoordinateLockConfig("east", 10, 64, 0, active_area=20)
     controls = RuntimeControls.from_config(
         BotConfig(
@@ -512,11 +512,10 @@ def test_worker_target_mode_falls_back_to_look_at_lock_without_match():
 
     worker.check_once()
 
-    assert keys.events[0] == ("down", "w")
-    assert sum(event[1] for event in keys.events if event[0] == "move") < 0
+    assert keys.events == [("down", "a"), ("up", "a")]
 
 
-def test_worker_target_api_error_logs_once_and_falls_back_to_lock():
+def test_worker_target_api_error_logs_once_and_keeps_camera_direction():
     lock = CoordinateLockConfig("east", 10, 64, 0, active_area=20)
     controls = RuntimeControls.from_config(
         BotConfig(
@@ -548,10 +547,15 @@ def test_worker_target_api_error_logs_once_and_falls_back_to_lock():
     while not logs.empty():
         messages.append(logs.get_nowait())
     assert sum("look-target-error" in message for message in messages) == 1
-    assert ("down", "w") in keys.events
+    assert keys.events == [
+        ("down", "a"),
+        ("up", "a"),
+        ("down", "a"),
+        ("up", "a"),
+    ]
 
 
-def test_worker_missing_player_pitch_falls_back_to_lock():
+def test_worker_missing_player_pitch_keeps_camera_direction():
     lock = CoordinateLockConfig("east", 10, 64, 0, active_area=20)
     controls = RuntimeControls.from_config(
         BotConfig(
@@ -578,7 +582,7 @@ def test_worker_missing_player_pitch_falls_back_to_lock():
 
     worker.check_once()
 
-    assert keys.events[0] == ("down", "w")
+    assert keys.events == [("down", "a"), ("up", "a")]
     assert "pitch" in logs.get_nowait().casefold()
 
 
