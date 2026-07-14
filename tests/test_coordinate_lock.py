@@ -718,6 +718,41 @@ def test_worker_rechecks_inventory_immediately_before_auto_hit():
     assert keys.events == []
 
 
+def test_worker_rechecks_inventory_after_nearby_entity_reads():
+    container = FakeContainerClient()
+
+    class OpensContainerDuringEntityRead(FakeNearbyEntityClient):
+        def get_players(self):
+            players = super().get_players()
+            container.open = True
+            return players
+
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            coordinate_lock_enabled=True,
+            coordinate_lock_auto_hit_enabled=True,
+            coordinate_locks=(CoordinateLockConfig("home", 0, 64, 0),),
+        )
+    )
+    keys = FakePyAutoGui()
+    worker = CoordinateLockWorker(
+        controls,
+        queue.Queue(),
+        player_client=FakePlayerClient(PlayerPosition(0, 64, 0)),
+        container_client=container,
+        entity_client=OpensContainerDuringEntityRead(
+            players=(NearbyEntity(2.0, "Alex", None),)
+        ),
+        pyautogui_module=keys,
+        foreground_provider=lambda: True,
+    )
+
+    worker.check_once()
+
+    assert worker._auto_hit_once() is False
+    assert keys.events == []
+
+
 def test_worker_skips_auto_hit_when_inventory_check_fails():
     class FailingContainerClient:
         def is_open(self):
