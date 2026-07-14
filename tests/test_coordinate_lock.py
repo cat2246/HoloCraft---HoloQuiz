@@ -3,12 +3,16 @@ import queue
 
 from holoquiz.config import BotConfig, CoordinateLockConfig
 from holoquiz.coordinate_lock import (
+    AUTO_HIT_TARGET_DISTANCE,
     ContainerDataClient,
     CoordinateLockWorker,
+    NearbyEntity,
+    NearbyEntityClient,
     PlayerDataClient,
     PlayerPosition,
     auto_hit_delay_seconds,
     camera_turn_pixels_for_target,
+    entity_matches_auto_hit_target,
     movement_key_for_target,
     heading_delta_for_target,
     nearest_enabled_lock,
@@ -29,6 +33,88 @@ class FakeResponse:
 
     def read(self):
         return json.dumps(self.payload).encode("utf-8")
+
+
+def test_nearby_entity_client_reads_players_and_mobs_from_expected_urls():
+    requests = []
+    payloads = {
+        "http://127.0.0.1:8026/data/players": {
+            "players": [
+                {
+                    "distance": 4.5,
+                    "name": "Alex",
+                    "custom_name": "[Lv 6]Tatsunoko",
+                }
+            ]
+        },
+        "http://127.0.0.1:8026/data/mobs": {
+            "mobs": [{"distance": 3.0, "name": "Zombie"}]
+        },
+    }
+
+    def opener(url, *, timeout):
+        requests.append((url, timeout))
+        return FakeResponse(payloads[url])
+
+    client = NearbyEntityClient(opener=opener, timeout_seconds=0.25)
+
+    assert client.get_players() == (
+        NearbyEntity(4.5, "Alex", "[Lv 6]Tatsunoko"),
+    )
+    assert client.get_mobs() == (NearbyEntity(3.0, "Zombie", None),)
+    assert requests == [
+        ("http://127.0.0.1:8026/data/players", 0.25),
+        ("http://127.0.0.1:8026/data/mobs", 0.25),
+    ]
+
+
+def test_nearby_entity_client_rejects_malformed_payloads():
+    client = NearbyEntityClient(
+        opener=lambda *_args, **_kwargs: FakeResponse({"players": {}})
+    )
+
+    try:
+        client.get_players()
+    except ValueError as error:
+        assert "players list" in str(error)
+    else:
+        raise AssertionError("Expected malformed players payload to fail")
+
+
+def test_entity_target_matching_uses_five_block_inclusive_boundary_and_exact_casefold():
+    player = NearbyEntity(5.0, "Alex", " [LV 6]TATSUNOKO ")
+    farther_player = NearbyEntity(5.01, "Alex", "[Lv 6]Tatsunoko")
+
+    assert AUTO_HIT_TARGET_DISTANCE == 5.0
+    assert entity_matches_auto_hit_target(
+        player,
+        target_name="[Lv 6]Tatsunoko",
+        name_attribute="custom_name",
+    ) is True
+    assert entity_matches_auto_hit_target(
+        player,
+        target_name="Tatsunoko",
+        name_attribute="custom_name",
+    ) is False
+    assert entity_matches_auto_hit_target(
+        farther_player,
+        target_name="",
+        name_attribute="custom_name",
+    ) is False
+
+
+def test_entity_target_matching_uses_mob_name_and_rejects_missing_player_custom_name():
+    entity = NearbyEntity(2.0, "Zombie", None)
+
+    assert entity_matches_auto_hit_target(
+        entity, target_name="zOmBiE", name_attribute="name"
+    ) is True
+    assert entity_matches_auto_hit_target(
+        entity, target_name="Zombie", name_attribute="custom_name"
+    ) is False
+    assert entity_matches_auto_hit_target(
+        entity, target_name="", name_attribute="custom_name"
+    ) is True
 
 
 def test_auto_hit_delay_uses_configured_range():

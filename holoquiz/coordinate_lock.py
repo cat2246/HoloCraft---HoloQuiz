@@ -74,6 +74,91 @@ class ContainerDataClient:
         return open_value
 
 
+AUTO_HIT_TARGET_DISTANCE = 5.0
+
+
+@dataclass(frozen=True)
+class NearbyEntity:
+    distance: float
+    name: str
+    custom_name: str | None = None
+
+
+class NearbyEntityClient:
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:8026/data",
+        *,
+        timeout_seconds: float = 0.75,
+        opener: Callable[..., Any] = urlopen,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self._opener = opener
+
+    def get_players(self) -> tuple[NearbyEntity, ...]:
+        return self._get_entities("players")
+
+    def get_mobs(self) -> tuple[NearbyEntity, ...]:
+        return self._get_entities("mobs")
+
+    def _get_entities(self, collection: str) -> tuple[NearbyEntity, ...]:
+        url = f"{self.base_url}/{collection}"
+        with self._opener(url, timeout=self.timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Nearby {collection} endpoint returned a non-object response."
+            )
+        raw_entities = payload.get(collection)
+        if not isinstance(raw_entities, list):
+            raise ValueError(f"Nearby endpoint is missing the {collection} list.")
+
+        entities: list[NearbyEntity] = []
+        for raw_entity in raw_entities:
+            if not isinstance(raw_entity, dict):
+                raise ValueError(
+                    f"Nearby {collection} list contains a non-object entity."
+                )
+            name = raw_entity.get("name")
+            if not isinstance(name, str):
+                raise ValueError(
+                    f"Nearby {collection} entity is missing a string name."
+                )
+            try:
+                distance = float(raw_entity["distance"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(
+                    f"Nearby {collection} entity has an invalid distance."
+                ) from error
+            if not math.isfinite(distance) or distance < 0:
+                raise ValueError(
+                    f"Nearby {collection} entity has an invalid distance."
+                )
+            custom_name = raw_entity.get("custom_name")
+            if custom_name is not None and not isinstance(custom_name, str):
+                raise ValueError(
+                    f"Nearby {collection} entity has an invalid custom_name."
+                )
+            entities.append(NearbyEntity(distance, name, custom_name))
+        return tuple(entities)
+
+
+def entity_matches_auto_hit_target(
+    entity: NearbyEntity,
+    *,
+    target_name: str,
+    name_attribute: str,
+) -> bool:
+    if entity.distance > AUTO_HIT_TARGET_DISTANCE:
+        return False
+    normalized_target = target_name.strip().casefold()
+    if not normalized_target:
+        return True
+    candidate = getattr(entity, name_attribute)
+    return candidate is not None and candidate.strip().casefold() == normalized_target
+
+
 def _coordinate(payload: dict[str, Any], primary: str, fallback: str) -> float:
     value = payload.get(primary, payload.get(fallback))
     if value is None:
