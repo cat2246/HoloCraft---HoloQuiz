@@ -42,7 +42,7 @@ Minecraft yaw and pitch conventions will be converted into shortest signed angul
 Movement remains directed toward the saved lock coordinate:
 
 - In `target` mode with an eligible target, the worker selects forward, backward, left, or right from the current yaw and moves toward the lock while the camera tracks the entity.
-- In `target` mode without an eligible target, the worker falls back to `lock` behavior: it turns toward the lock and moves forward.
+- In `target` mode without an eligible target, the worker leaves the camera unchanged and selects forward, backward, left, or right from the current yaw to move toward the lock.
 - In `lock` mode, existing Look at lock behavior is preserved.
 - In `none` mode, existing free-look movement behavior is preserved.
 
@@ -50,9 +50,9 @@ Jump and stall-recovery behavior remains unchanged.
 
 ## Failure Handling
 
-If the target entity endpoint fails, returns malformed data, or has no eligible target, Coordinate Lock will continue safely by looking at the lock. Repeated entity API errors will be logged without flooding the Activity view. Existing safeguards for disabled automation, open containers, inactive Minecraft windows, and input coordination remain in force.
+If the target entity endpoint fails, returns malformed data, or has no eligible target, Coordinate Lock will leave the camera unchanged and continue moving toward the lock using camera-relative movement. Repeated entity API errors will be logged without flooding the Activity view. Existing safeguards for disabled automation, open containers, inactive Minecraft windows, and input coordination remain in force.
 
-If the configured player endpoint lacks pitch while target mode is selected, the worker will log a specific error and fall back to Look at lock instead of guessing the vertical camera angle.
+If the configured player endpoint lacks pitch while target mode is selected, the worker will log a specific error, leave the camera unchanged, and continue camera-relative movement toward the lock instead of guessing the vertical camera angle.
 
 ## Testing
 
@@ -66,7 +66,7 @@ Automated tests will cover:
 - yaw and pitch calculations toward body center;
 - simultaneous smooth horizontal and vertical camera movement;
 - moving toward the lock while facing a tracked target;
-- falling back to Look at lock when no target matches or entity data fails;
+- preserving the camera direction while moving toward the lock when no target matches or entity data fails;
 - mutually exclusive GUI controls and persisted selection;
 - preservation of existing Auto Hit and Look at lock behavior.
 
