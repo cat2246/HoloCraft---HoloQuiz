@@ -22,6 +22,7 @@ from holoquiz.config import (
     ChatTriggerConfig,
     COORDINATE_LOCK_LOOK_LOCK,
     COORDINATE_LOCK_LOOK_NONE,
+    COORDINATE_LOCK_LOOK_TARGET,
     CoordinateLockConfig,
     ScreenPhraseRegionConfig,
     load_config,
@@ -765,8 +766,11 @@ class HoloQuizControlPanel:
         self.coordinate_lock_auto_hit_max_var = tk.StringVar(
             value=f"{config.coordinate_lock_auto_hit_max_seconds:g}"
         )
-        self.coordinate_lock_look_at_var = tk.BooleanVar(
+        self.coordinate_lock_look_at_lock_var = tk.BooleanVar(
             value=config.coordinate_lock_look_mode == COORDINATE_LOCK_LOOK_LOCK
+        )
+        self.coordinate_lock_look_at_target_var = tk.BooleanVar(
+            value=config.coordinate_lock_look_mode == COORDINATE_LOCK_LOOK_TARGET
         )
         self.coordinate_lock_name_var = tk.StringVar(value="")
         self.coordinate_lock_x_var = tk.StringVar(value="")
@@ -1200,7 +1204,7 @@ class HoloQuizControlPanel:
 
         behavior_row = ttk.Frame(coordinate_lock_form)
         behavior_row.grid(row=0, column=0, sticky="ew")
-        behavior_row.columnconfigure(4, weight=1)
+        behavior_row.columnconfigure(5, weight=1)
         ttk.Label(
             behavior_row,
             text="Lock behavior",
@@ -1221,9 +1225,19 @@ class HoloQuizControlPanel:
         ttk.Checkbutton(
             behavior_row,
             text="Look at lock",
-            variable=self.coordinate_lock_look_at_var,
-            command=self._on_coordinate_lock_look_at_toggle,
-        ).grid(row=0, column=3, sticky="w")
+            variable=self.coordinate_lock_look_at_lock_var,
+            command=lambda: self._on_coordinate_lock_look_mode_toggle(
+                COORDINATE_LOCK_LOOK_LOCK
+            ),
+        ).grid(row=0, column=3, sticky="w", padx=(0, 18))
+        ttk.Checkbutton(
+            behavior_row,
+            text="Look at target",
+            variable=self.coordinate_lock_look_at_target_var,
+            command=lambda: self._on_coordinate_lock_look_mode_toggle(
+                COORDINATE_LOCK_LOOK_TARGET
+            ),
+        ).grid(row=0, column=4, sticky="w")
         ttk.Label(
             behavior_row,
             text="Auto hit interval",
@@ -1897,12 +1911,23 @@ class HoloQuizControlPanel:
             )
             self._save_coordinate_lock_settings()
 
-    def _on_coordinate_lock_look_at_toggle(self) -> None:
-        self.controls.set_coordinate_lock_look_mode(
-            COORDINATE_LOCK_LOOK_LOCK
-            if self.coordinate_lock_look_at_var.get()
-            else COORDINATE_LOCK_LOOK_NONE
+    def _on_coordinate_lock_look_mode_toggle(self, mode: str) -> None:
+        selected_var = (
+            self.coordinate_lock_look_at_lock_var
+            if mode == COORDINATE_LOCK_LOOK_LOCK
+            else self.coordinate_lock_look_at_target_var
         )
+        other_var = (
+            self.coordinate_lock_look_at_target_var
+            if mode == COORDINATE_LOCK_LOOK_LOCK
+            else self.coordinate_lock_look_at_lock_var
+        )
+        if selected_var.get():
+            other_var.set(False)
+            selected_mode = mode
+        else:
+            selected_mode = COORDINATE_LOCK_LOOK_NONE
+        self.controls.set_coordinate_lock_look_mode(selected_mode)
         self._save_coordinate_lock_settings()
 
     def _on_add_coordinate_lock(self) -> None:

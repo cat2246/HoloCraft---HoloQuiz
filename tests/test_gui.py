@@ -22,6 +22,17 @@ from holoquiz.screen_phrase_watcher import (
 )
 
 
+class RecordingVar:
+    def __init__(self, value=None):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+    def set(self, value):
+        self.value = value
+
+
 def test_gui_app_title_is_holocraft_tools():
     assert getattr(gui, "APP_TITLE", None) == "HoloCraft Tools"
 
@@ -231,6 +242,52 @@ def test_coordinate_table_action_makes_only_selected_target_active():
 
     locks = panel.controls.get_coordinate_locks()
     assert [lock.enabled for lock in locks] == [False, True]
+
+
+def test_selecting_look_at_target_deselects_look_at_lock_and_persists():
+    saved = []
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.controls = RuntimeControls.from_config(BotConfig())
+    panel.coordinate_lock_look_at_lock_var = RecordingVar(True)
+    panel.coordinate_lock_look_at_target_var = RecordingVar(True)
+    panel._save_coordinate_lock_settings = lambda: saved.append(True)
+
+    panel._on_coordinate_lock_look_mode_toggle("target")
+
+    assert panel.coordinate_lock_look_at_lock_var.value is False
+    assert panel.coordinate_lock_look_at_target_var.value is True
+    assert panel.controls.get_config().coordinate_lock_look_mode == "target"
+    assert saved == [True]
+
+
+def test_selecting_look_at_lock_deselects_look_at_target():
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.controls = RuntimeControls.from_config(
+        BotConfig(coordinate_lock_look_mode="target")
+    )
+    panel.coordinate_lock_look_at_lock_var = RecordingVar(True)
+    panel.coordinate_lock_look_at_target_var = RecordingVar(True)
+    panel._save_coordinate_lock_settings = lambda: None
+
+    panel._on_coordinate_lock_look_mode_toggle("lock")
+
+    assert panel.coordinate_lock_look_at_lock_var.value is True
+    assert panel.coordinate_lock_look_at_target_var.value is False
+    assert panel.controls.get_config().coordinate_lock_look_mode == "lock"
+
+
+def test_deselecting_active_look_mode_returns_to_none():
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.controls = RuntimeControls.from_config(
+        BotConfig(coordinate_lock_look_mode="lock")
+    )
+    panel.coordinate_lock_look_at_lock_var = RecordingVar(False)
+    panel.coordinate_lock_look_at_target_var = RecordingVar(False)
+    panel._save_coordinate_lock_settings = lambda: None
+
+    panel._on_coordinate_lock_look_mode_toggle("lock")
+
+    assert panel.controls.get_config().coordinate_lock_look_mode == "none"
 
 
 def test_coordinate_form_builds_target_with_custom_active_area():
