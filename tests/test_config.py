@@ -64,7 +64,15 @@ def test_load_and_save_coordinate_locks(tmp_path):
     config_path.write_text(json.dumps({"dry_run": False}), encoding="utf-8")
     locks = [
         CoordinateLockConfig(
-            id="home", x=1.5, y=64.0, z=-3.25, name="Home", active_area=25.0
+            id="home",
+            x=1.5,
+            y=64.0,
+            z=-3.25,
+            name="Home",
+            active_area=25.0,
+            auto_hit_players=True,
+            auto_hit_mobs=False,
+            auto_hit_target_name="[Lv 6]Tatsunoko",
         ),
         CoordinateLockConfig(
             id="afk", x=10.0, y=70.0, z=20.0, enabled=False, name="AFK Room"
@@ -89,6 +97,13 @@ def test_load_and_save_coordinate_locks(tmp_path):
     assert config.coordinate_lock_auto_hit_max_seconds == 0.5
     assert config.coordinate_lock_look_at_enabled is True
     assert config.coordinate_locks == tuple(locks)
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    assert raw["coordinate_locks"][0]["auto_hit_players"] is True
+    assert raw["coordinate_locks"][0]["auto_hit_mobs"] is False
+    assert (
+        raw["coordinate_locks"][0]["auto_hit_target_name"]
+        == "[Lv 6]Tatsunoko"
+    )
 
 
 def test_load_coordinate_locks_without_new_fields_keeps_backward_compatibility(
@@ -114,6 +129,20 @@ def test_load_coordinate_locks_without_new_fields_keeps_backward_compatibility(
             id="old-lock", x=1.0, y=64.0, z=-2.0, active_area=35.0
         ),
     )
+    lock = config.coordinate_locks[0]
+    assert lock.auto_hit_players is True
+    assert lock.auto_hit_mobs is True
+    assert lock.auto_hit_target_name == ""
+
+
+def test_example_config_documents_coordinate_auto_hit_targets():
+    raw = json.loads(Path("config.example.json").read_text(encoding="utf-8"))
+
+    example = raw["coordinate_locks"][0]
+    assert example["enabled"] is False
+    assert example["auto_hit_players"] is True
+    assert example["auto_hit_mobs"] is True
+    assert example["auto_hit_target_name"] == ""
 
 
 def test_load_config_overrides_defaults(tmp_path):

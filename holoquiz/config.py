@@ -35,6 +35,9 @@ class CoordinateLockConfig:
     enabled: bool = True
     name: str = ""
     active_area: float = 50.0
+    auto_hit_players: bool = True
+    auto_hit_mobs: bool = True
+    auto_hit_target_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -330,6 +333,11 @@ def _coordinate_locks_from_json(
                 enabled=bool(raw_lock.get("enabled", True)),
                 name=str(raw_lock.get("name", "")).strip(),
                 active_area=float(raw_lock.get("active_area", default_active_area)),
+                auto_hit_players=bool(raw_lock.get("auto_hit_players", True)),
+                auto_hit_mobs=bool(raw_lock.get("auto_hit_mobs", True)),
+                auto_hit_target_name=str(
+                    raw_lock.get("auto_hit_target_name", "")
+                ).strip(),
             )
         )
     return tuple(locks)
@@ -344,6 +352,9 @@ def _coordinate_lock_to_json(lock: CoordinateLockConfig) -> dict[str, Any]:
         "enabled": lock.enabled,
         "name": lock.name,
         "active_area": lock.active_area,
+        "auto_hit_players": lock.auto_hit_players,
+        "auto_hit_mobs": lock.auto_hit_mobs,
+        "auto_hit_target_name": lock.auto_hit_target_name,
     }
 
 

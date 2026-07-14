@@ -39,7 +39,20 @@
   "coordinate_lock_auto_hit_min_seconds": 0.3,
   "coordinate_lock_auto_hit_max_seconds": 0.8,
   "coordinate_lock_look_at_enabled": false,
-  "coordinate_locks": [],
+  "coordinate_locks": [
+    {
+      "id": "example-farm",
+      "x": 0.0,
+      "y": 64.0,
+      "z": 0.0,
+      "enabled": false,
+      "name": "Example Farm",
+      "active_area": 50.0,
+      "auto_hit_players": true,
+      "auto_hit_mobs": true,
+      "auto_hit_target_name": ""
+    }
+  ],
   "coordinate_lock_max_distance": 50.0,
   "coordinate_lock_tolerance": 0.75,
   "player_data_url": "http://localhost:8025/data/player"
