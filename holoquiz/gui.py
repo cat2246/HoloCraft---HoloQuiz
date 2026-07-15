@@ -26,6 +26,7 @@ from holoquiz.config import (
     CoordinateLockConfig,
     ScreenPhraseRegionConfig,
     load_config,
+    save_answer_sound_setting,
     save_chat_triggers_settings,
     save_coordinate_lock_settings,
     save_screen_phrase_settings,
@@ -36,6 +37,7 @@ from holoquiz.minecraft_text_ocr import read_minecraft_text
 from holoquiz.mouse_hotkey import Mouse4HotkeyListener
 from holoquiz.runner import build_bot, drain_answer_reveals
 from holoquiz.runtime import (
+    FIND_ANSWER_FUNCTION,
     FunctionDefinition,
     RuntimeControls,
     SCREEN_PHRASE_WATCHER_FUNCTION,
@@ -114,6 +116,9 @@ class ControlPanelController:
 
     def set_dry_run(self, enabled: bool) -> None:
         self.controls.set_dry_run(enabled)
+
+    def set_answer_sound_enabled(self, enabled: bool) -> None:
+        self.controls.set_answer_sound_enabled(enabled)
 
     def set_function_enabled(self, key: str, enabled: bool) -> None:
         self.controls.set_function_enabled(key, enabled)
@@ -727,6 +732,9 @@ class HoloQuizControlPanel:
         snapshot = self.controls.snapshot()
         self.program_var = tk.BooleanVar(value=snapshot.program_enabled)
         self.dry_run_var = tk.BooleanVar(value=snapshot.dry_run)
+        self.answer_sound_muted_var = tk.BooleanVar(
+            value=not snapshot.answer_sound_enabled
+        )
         self.delay_min_var = tk.StringVar(value=f"{snapshot.send_delay_min_seconds:g}")
         self.delay_max_var = tk.StringVar(value=f"{snapshot.send_delay_max_seconds:g}")
         self.status_var = tk.StringVar(value="Starting")
@@ -930,6 +938,18 @@ class HoloQuizControlPanel:
                 function,
                 row=holoquiz_function_row,
             )
+            if function.key == FIND_ANSWER_FUNCTION:
+                ttk.Checkbutton(
+                    holoquiz_frame,
+                    text="Mute answer sound",
+                    variable=self.answer_sound_muted_var,
+                    command=self._on_answer_sound_mute_toggle,
+                ).grid(
+                    row=holoquiz_function_row,
+                    column=1,
+                    sticky="w",
+                    padx=(12, 0),
+                )
             holoquiz_function_row += 1
 
         browser_row = holoquiz_function_row
@@ -1563,7 +1583,7 @@ class HoloQuizControlPanel:
             text=function.label,
             variable=variable,
             command=lambda key=function.key: self._on_function_toggle(key),
-        ).grid(row=row, column=0, columnspan=2, sticky="w")
+        ).grid(row=row, column=0, sticky="w")
 
     def _on_program_toggle(self) -> None:
         self.controller.set_program_enabled(self.program_var.get())
@@ -1571,6 +1591,11 @@ class HoloQuizControlPanel:
 
     def _on_dry_run_toggle(self) -> None:
         self.controller.set_dry_run(self.dry_run_var.get())
+
+    def _on_answer_sound_mute_toggle(self) -> None:
+        enabled = not self.answer_sound_muted_var.get()
+        self.controller.set_answer_sound_enabled(enabled)
+        save_answer_sound_setting(self.config_path, enabled=enabled)
 
     def _on_function_toggle(self, key: str) -> None:
         self.controller.set_function_enabled(key, self.function_vars[key].get())

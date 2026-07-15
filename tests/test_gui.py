@@ -1,3 +1,4 @@
+import json
 import queue
 from types import SimpleNamespace
 
@@ -6,6 +7,7 @@ from holoquiz.config import BotConfig, ChatTriggerConfig, CoordinateLockConfig
 from holoquiz.gui import (
     BROWSER_SEARCH_STATUS_MAX_CHARS,
     ControlPanelController,
+    HoloQuizControlPanel,
     OcrScreenTextReader,
     ScreenPhraseWorker,
     build_browser_search_query,
@@ -98,15 +100,38 @@ def test_control_panel_controller_updates_runtime_controls():
 
     controller.set_program_enabled(False)
     controller.set_dry_run(False)
+    controller.set_answer_sound_enabled(False)
     controller.set_function_enabled(FIND_ANSWER_FUNCTION, False)
     result = controller.set_send_delay_range("1", "3")
 
     assert result.ok is True
     assert controls.snapshot().program_enabled is False
     assert controls.get_config().dry_run is False
+    assert controls.get_config().answer_sound_enabled is False
     assert controls.is_function_enabled(FIND_ANSWER_FUNCTION) is False
     assert controls.get_config().send_delay_min_seconds == 1.0
     assert controls.get_config().send_delay_max_seconds == 3.0
+
+
+def test_answer_sound_mute_toggle_updates_runtime_and_persists(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"answer_sound_enabled": True}),
+        encoding="utf-8",
+    )
+    controls = RuntimeControls.from_config(BotConfig(answer_sound_enabled=True))
+    panel = object.__new__(HoloQuizControlPanel)
+    panel.config_path = config_path
+    panel.controls = controls
+    panel.controller = ControlPanelController(controls)
+    panel.answer_sound_muted_var = RecordingVar(True)
+
+    panel._on_answer_sound_mute_toggle()
+
+    assert controls.get_config().answer_sound_enabled is False
+    assert json.loads(config_path.read_text(encoding="utf-8"))[
+        "answer_sound_enabled"
+    ] is False
 
 
 def test_control_panel_controller_rejects_invalid_send_delay():
