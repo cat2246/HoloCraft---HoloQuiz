@@ -165,7 +165,7 @@ class ChatSender:
         return pyperclip
 
     def _play_dry_run_sound(self, config: BotConfig) -> None:
-        if not config.dry_run_sound_path:
+        if not config.answer_sound_enabled or not config.dry_run_sound_path:
             return
 
         try:

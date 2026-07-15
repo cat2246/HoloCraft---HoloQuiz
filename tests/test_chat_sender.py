@@ -61,6 +61,22 @@ def test_dry_run_sender_copies_answer_without_pasting(capsys):
     assert fake.calls == []
 
 
+def test_dry_run_sender_copies_answer_without_sound_when_muted(capsys):
+    clipboard = FakeClipboard()
+    sound = FakeSound()
+    sender = ChatSender(
+        BotConfig(dry_run=True, answer_sound_enabled=False),
+        clipboard_module=clipboard,
+        sound_module=sound,
+    )
+
+    sender.send("Notch")
+
+    assert clipboard.values == ["Notch"]
+    assert sound.calls == []
+    assert "[dry-run] Would send answer: Notch" in capsys.readouterr().out
+
+
 def test_live_sender_pastes_answer_by_default(monkeypatch, capsys):
     fake = FakePyAutoGui()
     clipboard = FakeClipboard()
