@@ -38,6 +38,7 @@ class FunctionRegistry:
 class RuntimeSnapshot:
     program_enabled: bool
     dry_run: bool
+    answer_sound_enabled: bool
     auto_answer_enabled: bool
     send_delay_seconds: float
     send_delay_min_seconds: float
@@ -67,6 +68,7 @@ class RuntimeControls:
         self._lock = RLock()
         self._program_enabled = program_enabled and base_config.program_enabled
         self._dry_run = base_config.dry_run
+        self._answer_sound_enabled = base_config.answer_sound_enabled
         self._auto_answer_enabled = base_config.auto_answer_enabled
         self._send_delay_seconds = base_config.send_delay_seconds
         self._send_delay_min_seconds = base_config.send_delay_min_seconds
@@ -112,6 +114,7 @@ class RuntimeControls:
                 program_enabled=self._program_enabled,
                 auto_answer_enabled=self._auto_answer_enabled,
                 dry_run=self._dry_run,
+                answer_sound_enabled=self._answer_sound_enabled,
                 send_delay_seconds=self._send_delay_seconds,
                 send_delay_min_seconds=self._send_delay_min_seconds,
                 send_delay_max_seconds=self._send_delay_max_seconds,
@@ -134,6 +137,7 @@ class RuntimeControls:
             return RuntimeSnapshot(
                 program_enabled=self._program_enabled,
                 dry_run=self._dry_run,
+                answer_sound_enabled=self._answer_sound_enabled,
                 auto_answer_enabled=self._auto_answer_enabled,
                 send_delay_seconds=self._send_delay_seconds,
                 send_delay_min_seconds=self._send_delay_min_seconds,
@@ -165,6 +169,10 @@ class RuntimeControls:
     def set_dry_run(self, enabled: bool) -> None:
         with self._lock:
             self._dry_run = enabled
+
+    def set_answer_sound_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._answer_sound_enabled = enabled
 
     def get_latest_question(self) -> str | None:
         with self._lock:

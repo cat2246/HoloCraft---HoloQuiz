@@ -11,6 +11,7 @@ from holoquiz.config import (
     ScreenPhraseRegionConfig,
     discover_default_log_path,
     load_config,
+    save_answer_sound_setting,
     save_chat_triggers_settings,
     save_coordinate_lock_settings,
     save_screen_phrase_settings,
@@ -29,6 +30,7 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "program_enabled": True,
         "auto_answer_enabled": True,
         "dry_run": True,
+        "answer_sound_enabled": True,
         "codex_command": "codex",
         "codex_model": "gpt-5.4",
         "codex_reasoning_effort": "low",
@@ -225,6 +227,7 @@ def test_load_config_overrides_defaults(tmp_path):
   "program_enabled": false,
   "auto_answer_enabled": false,
   "dry_run": false,
+  "answer_sound_enabled": false,
   "codex_model": "gpt-5.4-nano",
   "codex_timeout_seconds": 3,
   "send_delay_seconds": 0.2,
@@ -243,6 +246,7 @@ def test_load_config_overrides_defaults(tmp_path):
     assert config.program_enabled is False
     assert config.auto_answer_enabled is False
     assert config.dry_run is False
+    assert config.answer_sound_enabled is False
     assert config.codex_model == "gpt-5.4-nano"
     assert config.codex_timeout_seconds == 3
     assert config.send_delay_seconds == 0.2
@@ -251,6 +255,31 @@ def test_load_config_overrides_defaults(tmp_path):
     assert config.dry_run_sound_path == Path("C:/Sounds/answer.wav")
     assert config.codex_command == "codex"
     assert config.memory_path == Path("custom_memory.json")
+
+
+def test_load_config_without_answer_sound_setting_defaults_enabled(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"dry_run": True}), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.answer_sound_enabled is True
+
+
+def test_save_answer_sound_setting_preserves_other_config_values(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"dry_run": True, "codex_model": "gpt-5.4"}),
+        encoding="utf-8",
+    )
+
+    save_answer_sound_setting(config_path, enabled=False)
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "dry_run": True,
+        "codex_model": "gpt-5.4",
+        "answer_sound_enabled": False,
+    }
 
 
 def test_load_config_accepts_utf8_sig_config_file(tmp_path):

@@ -65,6 +65,7 @@ class BotConfig:
     program_enabled: bool = True
     auto_answer_enabled: bool = True
     dry_run: bool = True
+    answer_sound_enabled: bool = True
     dry_run_sound_path: Path | None = Path(
         r"C:\Users\limwi\Downloads\gawr-gura-a.wav"
     )
@@ -208,6 +209,20 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
         )
 
     return BotConfig(**values)
+
+
+def save_answer_sound_setting(path: Path, *, enabled: bool) -> None:
+    raw_config: dict[str, Any] = {}
+    if path.exists():
+        raw_config = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(raw_config, dict):
+            raise ValueError("Config root must be a JSON object.")
+
+    raw_config["answer_sound_enabled"] = enabled
+    path.write_text(
+        json.dumps(raw_config, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def save_screen_phrase_settings(

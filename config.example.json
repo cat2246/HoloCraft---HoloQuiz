@@ -3,6 +3,7 @@
   "program_enabled": true,
   "auto_answer_enabled": true,
   "dry_run": true,
+  "answer_sound_enabled": true,
   "dry_run_sound_path": "C:\\Users\\limwi\\Downloads\\gawr-gura-a.wav",
   "codex_command": "codex",
   "codex_model": "gpt-5.4",

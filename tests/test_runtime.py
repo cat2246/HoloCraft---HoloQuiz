@@ -50,6 +50,15 @@ def test_runtime_controls_merge_live_values_into_config():
     assert config.send_delay_max_seconds == 1.25
 
 
+def test_runtime_controls_update_answer_sound_setting():
+    controls = RuntimeControls.from_config(BotConfig(answer_sound_enabled=True))
+
+    controls.set_answer_sound_enabled(False)
+
+    assert controls.snapshot().answer_sound_enabled is False
+    assert controls.get_config().answer_sound_enabled is False
+
+
 def test_runtime_controls_merge_live_delay_range_into_config():
     controls = RuntimeControls.from_config(BotConfig(send_delay_seconds=0.8))
 
