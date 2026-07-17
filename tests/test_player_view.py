@@ -264,3 +264,55 @@ def test_player_tab_public_lifecycle_is_explicit():
     assert callable(PlayerTab.deactivate)
     assert callable(PlayerTab.refresh)
     assert callable(PlayerTab.close)
+
+
+def test_player_tab_deactivate_hides_tooltip_before_stopping_poller():
+    actions = []
+
+    class RecordingTooltip:
+        def hide(self):
+            actions.append("tooltip hidden")
+
+    class RecordingPoller:
+        def deactivate(self):
+            actions.append("poller deactivated")
+
+    tab = object.__new__(PlayerTab)
+    tab.tooltip = RecordingTooltip()
+    tab.poller = RecordingPoller()
+
+    tab.deactivate()
+
+    assert actions == ["tooltip hidden", "poller deactivated"]
+
+
+def test_player_tab_extra_slot_cleanup_hides_tooltip_before_destroying_canvases():
+    actions = []
+
+    class RecordingTooltip:
+        def hide(self):
+            actions.append("tooltip hidden")
+
+    class RecordingCanvas:
+        def __init__(self, name):
+            self.name = name
+
+        def destroy(self):
+            actions.append(f"{self.name} destroyed")
+
+    class ExtraSlot:
+        def __init__(self, name):
+            self.canvas = RecordingCanvas(name)
+
+    tab = object.__new__(PlayerTab)
+    tab.tooltip = RecordingTooltip()
+    tab.extra_slots = [ExtraSlot("first"), ExtraSlot("second")]
+
+    tab._clear_extra_slots()
+
+    assert actions == [
+        "tooltip hidden",
+        "first destroyed",
+        "second destroyed",
+    ]
+    assert tab.extra_slots == []

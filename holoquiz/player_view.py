@@ -407,6 +407,14 @@ class PlayerTab:
             photo = self._photo(cache_key, png)
         widget.render(slot, photo)
 
+    def _clear_extra_slots(self) -> None:
+        if not self.extra_slots:
+            return
+        self.tooltip.hide()
+        for widget in self.extra_slots:
+            widget.canvas.destroy()
+        self.extra_slots.clear()
+
     def _render(self, data: PlayerViewData) -> None:
         snapshot = data.snapshot
         layout = build_inventory_layout(snapshot.inventory)
@@ -441,9 +449,7 @@ class PlayerTab:
             layout.offhand,
             data.icon_png_by_item_id,
         )
-        for widget in self.extra_slots:
-            widget.canvas.destroy()
-        self.extra_slots = []
+        self._clear_extra_slots()
         if layout.extra:
             self.extra_label.grid()
         else:
@@ -462,6 +468,7 @@ class PlayerTab:
         self.poller.activate()
 
     def deactivate(self) -> None:
+        self.tooltip.hide()
         self.poller.deactivate()
 
     def refresh(self) -> None:
