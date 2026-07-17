@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from threading import RLock
 
 from holoquiz.config import (
+    AutoHealItemConfig,
     BotConfig,
     ChatTriggerConfig,
     CoordinateLockConfig,
+    validate_auto_heal_items,
     validate_coordinate_lock_look_mode,
 )
 
@@ -54,6 +57,8 @@ class RuntimeSnapshot:
     coordinate_lock_auto_hit_max_seconds: float
     coordinate_lock_look_mode: str
     coordinate_locks: tuple[CoordinateLockConfig, ...]
+    auto_heal_enabled: bool
+    auto_heal_items: tuple[AutoHealItemConfig, ...]
 
 
 class RuntimeControls:
@@ -95,6 +100,10 @@ class RuntimeControls:
         self._coordinate_locks = _only_first_coordinate_lock_enabled(
             base_config.coordinate_locks
         )
+        self._auto_heal_enabled = base_config.auto_heal_enabled
+        self._auto_heal_items = validate_auto_heal_items(
+            base_config.auto_heal_items
+        )
         self._functions = {
             function.key: function.enabled_by_default
             for function in self.registry.all()
@@ -134,6 +143,8 @@ class RuntimeControls:
                 ),
                 coordinate_lock_look_mode=self._coordinate_lock_look_mode,
                 coordinate_locks=tuple(self._coordinate_locks),
+                auto_heal_enabled=self._auto_heal_enabled,
+                auto_heal_items=tuple(self._auto_heal_items),
             )
 
     def snapshot(self) -> RuntimeSnapshot:
@@ -161,6 +172,8 @@ class RuntimeControls:
                 ),
                 coordinate_lock_look_mode=self._coordinate_lock_look_mode,
                 coordinate_locks=tuple(self._coordinate_locks),
+                auto_heal_enabled=self._auto_heal_enabled,
+                auto_heal_items=tuple(self._auto_heal_items),
             )
 
     def is_program_enabled(self) -> bool:
@@ -266,6 +279,22 @@ class RuntimeControls:
     def set_chat_trigger_dry_run(self, enabled: bool) -> None:
         with self._lock:
             self._chat_trigger_dry_run = enabled
+
+    def set_auto_heal_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._auto_heal_enabled = bool(enabled)
+
+    def get_auto_heal_items(self) -> tuple[AutoHealItemConfig, ...]:
+        with self._lock:
+            return tuple(self._auto_heal_items)
+
+    def set_auto_heal_items(
+        self,
+        items: Sequence[AutoHealItemConfig],
+    ) -> None:
+        validated = validate_auto_heal_items(items)
+        with self._lock:
+            self._auto_heal_items = validated
 
     def is_coordinate_lock_enabled(self) -> bool:
         with self._lock:
