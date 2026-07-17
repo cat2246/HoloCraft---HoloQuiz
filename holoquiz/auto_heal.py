@@ -189,7 +189,11 @@ class AutoHealWorker:
         )
         if selection is None:
             return False
-        return self._use(selection)
+        return_hotbar_slot = find_return_hotbar_slot(
+            snapshot,
+            config.auto_heal_return_item_name,
+        )
+        return self._use(selection, return_hotbar_slot)
 
     def _environment_is_safe(self) -> bool:
         return (
@@ -197,25 +201,39 @@ class AutoHealWorker:
             and not self.container_client.is_open()
         )
 
-    def _use(self, selection: AutoHealSelection) -> bool:
+    def _use(
+        self,
+        selection: AutoHealSelection,
+        return_hotbar_slot: int | None,
+    ) -> bool:
         if self._stop_event.is_set() or not self._environment_is_safe():
             return False
         with self._input_coordinator.item_use_session() as allowed:
             if not allowed or self._stop_event.is_set():
                 return False
             pyautogui = self._pyautogui or self._load_pyautogui()
-            pyautogui.press(str(selection.hotbar_slot + 1))
+            slot_changed = False
             right_press_attempted = False
             interrupted = False
             try:
-                right_press_attempted = True
-                pyautogui.mouseDown(button="right")
-                interrupted = self._waiter(
-                    selection.rule.use_duration_seconds
-                )
+                pyautogui.press(str(selection.hotbar_slot + 1))
+                slot_changed = True
+                try:
+                    right_press_attempted = True
+                    pyautogui.mouseDown(button="right")
+                    interrupted = self._waiter(
+                        selection.rule.use_duration_seconds
+                    )
+                finally:
+                    if right_press_attempted:
+                        pyautogui.mouseUp(button="right")
             finally:
-                if right_press_attempted:
-                    pyautogui.mouseUp(button="right")
+                if slot_changed:
+                    self._return_to_hotbar_slot(
+                        pyautogui,
+                        return_hotbar_slot,
+                        selection.hotbar_slot,
+                    )
             if interrupted:
                 return False
             self._last_used_at[selection.item_name] = self._clock()
@@ -225,6 +243,27 @@ class AutoHealWorker:
                 f"slot {selection.hotbar_slot + 1}."
             )
             return True
+
+    def _return_to_hotbar_slot(
+        self,
+        pyautogui: Any,
+        return_hotbar_slot: int | None,
+        healing_hotbar_slot: int,
+    ) -> None:
+        if (
+            return_hotbar_slot is None
+            or return_hotbar_slot == healing_hotbar_slot
+            or self._stop_event.is_set()
+        ):
+            return
+        try:
+            if self._stop_event.is_set() or not self._environment_is_safe():
+                return
+            if self._stop_event.is_set():
+                return
+            pyautogui.press(str(return_hotbar_slot + 1))
+        except Exception as error:
+            self._status(f"[auto-heal-return-error] {error}")
 
     def _load_pyautogui(self) -> Any:
         import pyautogui

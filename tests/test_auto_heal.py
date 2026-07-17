@@ -266,6 +266,8 @@ def auto_heal_worker(
     backend=None,
     foreground=True,
     container_open=False,
+    container_client=None,
+    return_item_name="",
     clock=lambda: 100.0,
     wait_error=None,
     interrupted=False,
@@ -283,9 +285,14 @@ def auto_heal_worker(
             program_enabled=True,
             auto_heal_enabled=True,
             auto_heal_items=(configured_rule,),
+            auto_heal_return_item_name=return_item_name,
         )
     )
     input_backend = backend or FakeInput()
+    container_backend = container_client or FakeContainerClient(container_open)
+    foreground_provider = (
+        foreground if callable(foreground) else lambda: foreground
+    )
 
     def waiter(seconds):
         input_backend.events.append(("wait", seconds))
@@ -297,9 +304,9 @@ def auto_heal_worker(
         controls,
         lambda _message: None,
         player_client=FakePlayerClient(snapshot),
-        container_client=FakeContainerClient(container_open),
+        container_client=container_backend,
         pyautogui_module=input_backend,
-        foreground_provider=lambda: foreground,
+        foreground_provider=foreground_provider,
         input_coordinator=input_coordinator,
         clock=clock,
         waiter=waiter,
@@ -312,10 +319,11 @@ def test_worker_uses_selected_hotbar_item_for_configured_duration():
         snapshot=player_snapshot(
             health=5,
             hunger=20,
-            hotbar={8: "Potion"},
+            hotbar={0: "Sword", 8: "Potion"},
         ),
         rule=AutoHealItemConfig("Potion", 30, 2.5, 50, 0),
         backend=backend,
+        return_item_name="Sword",
         clock=lambda: 100.0,
     )
 
@@ -325,7 +333,161 @@ def test_worker_uses_selected_hotbar_item_for_configured_duration():
         ("mouseDown", "right"),
         ("wait", 2.5),
         ("mouseUp", "right"),
+        ("press", "1"),
     ]
+    assert worker._last_used_at == {"Potion": 100.0}
+
+
+@pytest.mark.parametrize(
+    ("return_name", "hotbar"),
+    [
+        ("", {8: "Potion"}),
+        ("Missing", {8: "Potion"}),
+        ("Potion", {8: "Potion"}),
+    ],
+)
+def test_worker_skips_unavailable_or_same_slot_return(return_name, hotbar):
+    backend = FakeInput()
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(health=5, hunger=20, hotbar=hotbar),
+        backend=backend,
+        return_item_name=return_name,
+    )
+
+    assert worker.check_once() is True
+    assert [event for event in backend.events if event[0] == "press"] == [
+        ("press", "9")
+    ]
+
+
+def test_worker_releases_then_returns_when_wait_raises():
+    backend = FakeInput()
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=5,
+            hunger=20,
+            hotbar={0: "Sword", 8: "Potion"},
+        ),
+        backend=backend,
+        return_item_name="Sword",
+        wait_error=RuntimeError("failed wait"),
+    )
+
+    with pytest.raises(RuntimeError, match="failed wait"):
+        worker.check_once()
+
+    assert backend.events[-2:] == [("mouseUp", "right"), ("press", "1")]
+    assert worker._last_used_at == {}
+
+
+class MouseDownFailInput(FakeInput):
+    def mouseDown(self, *, button):
+        super().mouseDown(button=button)
+        raise RuntimeError("right click failed")
+
+
+def test_worker_releases_then_returns_when_mouse_down_raises():
+    backend = MouseDownFailInput()
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=5,
+            hunger=20,
+            hotbar={0: "Sword", 8: "Potion"},
+        ),
+        backend=backend,
+        return_item_name="Sword",
+    )
+
+    with pytest.raises(RuntimeError, match="right click failed"):
+        worker.check_once()
+
+    assert backend.events == [
+        ("press", "9"),
+        ("mouseDown", "right"),
+        ("mouseUp", "right"),
+        ("press", "1"),
+    ]
+    assert worker._last_used_at == {}
+
+
+@pytest.mark.parametrize("unsafe_kind", ["foreground", "container"])
+def test_worker_skips_return_when_environment_becomes_unsafe(unsafe_kind):
+    backend = FakeInput()
+    foreground = {"safe": True}
+    container = FakeContainerClient(False)
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=5,
+            hunger=20,
+            hotbar={0: "Sword", 8: "Potion"},
+        ),
+        backend=backend,
+        return_item_name="Sword",
+        foreground=lambda: foreground["safe"],
+        container_client=container,
+    )
+
+    def make_unsafe(seconds):
+        backend.events.append(("wait", seconds))
+        if unsafe_kind == "foreground":
+            foreground["safe"] = False
+        else:
+            container.open = True
+        return False
+
+    worker._waiter = make_unsafe
+
+    assert worker.check_once() is True
+    assert backend.events[-1] == ("mouseUp", "right")
+    assert ("press", "1") not in backend.events
+
+
+def test_worker_never_returns_after_shutdown_begins():
+    backend = FakeInput()
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=5,
+            hunger=20,
+            hotbar={0: "Sword", 8: "Potion"},
+        ),
+        backend=backend,
+        return_item_name="Sword",
+    )
+
+    def stop_during_wait(seconds):
+        backend.events.append(("wait", seconds))
+        worker._stop_event.set()
+        return True
+
+    worker._waiter = stop_during_wait
+
+    assert worker.check_once() is False
+    assert backend.events[-1] == ("mouseUp", "right")
+    assert ("press", "1") not in backend.events
+    assert worker._last_used_at == {}
+
+
+class ReturnFailInput(FakeInput):
+    def press(self, key):
+        super().press(key)
+        if len([event for event in self.events if event[0] == "press"]) == 2:
+            raise RuntimeError("return failed")
+
+
+def test_return_failure_does_not_fail_completed_use_or_clear_cooldown():
+    backend = ReturnFailInput()
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=5,
+            hunger=20,
+            hotbar={0: "Sword", 8: "Potion"},
+        ),
+        backend=backend,
+        return_item_name="Sword",
+    )
+
+    assert worker.check_once() is True
+    assert backend.events[-1] == ("press", "1")
     assert worker._last_used_at == {"Potion": 100.0}
 
 
