@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -60,6 +62,15 @@ class CoordinateLockConfig:
 
 
 @dataclass(frozen=True)
+class AutoHealItemConfig:
+    name: str
+    cooldown_seconds: float
+    use_duration_seconds: float = 2.0
+    health_below: float = 0.0
+    hunger_below: int = 0
+
+
+@dataclass(frozen=True)
 class BotConfig:
     log_path: Path | None = None
     program_enabled: bool = True
@@ -100,6 +111,37 @@ class BotConfig:
     coordinate_lock_max_distance: float = 50.0
     coordinate_lock_tolerance: float = 0.75
     player_data_url: str = DEFAULT_PLAYER_DATA_URL
+    auto_heal_enabled: bool = False
+    auto_heal_items: tuple[AutoHealItemConfig, ...] = ()
+
+
+def validate_auto_heal_item(item: AutoHealItemConfig) -> AutoHealItemConfig:
+    if not item.name.strip():
+        raise ValueError("Auto Heal item name is required.")
+    if not math.isfinite(item.cooldown_seconds) or item.cooldown_seconds < 0:
+        raise ValueError("Auto Heal cooldown must be 0 or greater.")
+    if (
+        not math.isfinite(item.use_duration_seconds)
+        or item.use_duration_seconds <= 0
+    ):
+        raise ValueError("Auto Heal use duration must be greater than 0.")
+    if not math.isfinite(item.health_below) or item.health_below < 0:
+        raise ValueError("Auto Heal health threshold must be 0 or greater.")
+    if not 0 <= item.hunger_below <= 20:
+        raise ValueError("Auto Heal hunger threshold must be between 0 and 20.")
+    if item.health_below == 0 and item.hunger_below == 0:
+        raise ValueError("Enable at least one Auto Heal threshold.")
+    return item
+
+
+def validate_auto_heal_items(
+    items: Iterable[AutoHealItemConfig],
+) -> tuple[AutoHealItemConfig, ...]:
+    validated = tuple(validate_auto_heal_item(item) for item in items)
+    names = [item.name for item in validated]
+    if len(names) != len(set(names)):
+        raise ValueError("Auto Heal item names must be unique.")
+    return validated
 
 
 def validate_coordinate_lock_look_mode(mode: str) -> str:
@@ -208,6 +250,9 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
                 )
             ),
         )
+    values["auto_heal_items"] = _auto_heal_items_from_json(
+        values.get("auto_heal_items")
+    )
 
     return BotConfig(**values)
 
@@ -342,6 +387,24 @@ def save_coordinate_lock_settings(
     )
 
 
+def save_auto_heal_settings(
+    path: Path,
+    *,
+    enabled: bool,
+    items: Sequence[AutoHealItemConfig],
+) -> None:
+    raw_config = _read_existing_config_object(path)
+    raw_config["auto_heal_enabled"] = bool(enabled)
+    raw_config["auto_heal_items"] = [
+        _auto_heal_item_to_json(item)
+        for item in validate_auto_heal_items(items)
+    ]
+    path.write_text(
+        json.dumps(raw_config, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _region_from_json(value: Any) -> ScreenPhraseRegionConfig | None:
     if value is None:
         return None
@@ -451,6 +514,50 @@ def _coordinate_lock_to_json(lock: CoordinateLockConfig) -> dict[str, Any]:
     }
 
 
+def _auto_heal_items_from_json(
+    value: Any,
+) -> tuple[AutoHealItemConfig, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError("auto_heal_items must be a list.")
+    items = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise ValueError("Each Auto Heal item must be an object.")
+        items.append(
+            AutoHealItemConfig(
+                name=str(raw["name"]),
+                cooldown_seconds=float(raw.get("cooldown_seconds", 0.0)),
+                use_duration_seconds=float(
+                    raw.get("use_duration_seconds", 2.0)
+                ),
+                health_below=float(raw.get("health_below", 0.0)),
+                hunger_below=int(raw.get("hunger_below", 0)),
+            )
+        )
+    return validate_auto_heal_items(items)
+
+
+def _auto_heal_item_to_json(item: AutoHealItemConfig) -> dict[str, Any]:
+    return {
+        "name": item.name,
+        "cooldown_seconds": item.cooldown_seconds,
+        "use_duration_seconds": item.use_duration_seconds,
+        "health_below": item.health_below,
+        "hunger_below": item.hunger_below,
+    }
+
+
+def _read_existing_config_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    raw_config = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(raw_config, dict):
+        raise ValueError("Config root must be a JSON object.")
+    return raw_config
+
+
 def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -468,6 +575,9 @@ def _config_to_json_dict(config: BotConfig) -> dict[str, Any]:
     ]
     values["coordinate_locks"] = [
         _coordinate_lock_to_json(lock) for lock in config.coordinate_locks
+    ]
+    values["auto_heal_items"] = [
+        _auto_heal_item_to_json(item) for item in config.auto_heal_items
     ]
     values.pop("memory_path")
     return values

@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from holoquiz.config import (
+    AutoHealItemConfig,
     BotConfig,
     ChatTriggerConfig,
     COORDINATE_LOCK_LOOK_LOCK,
@@ -12,11 +15,13 @@ from holoquiz.config import (
     discover_default_log_path,
     load_config,
     save_answer_sound_setting,
+    save_auto_heal_settings,
     save_chat_triggers_settings,
     save_coordinate_lock_settings,
     save_holoquiz_enabled_setting,
     save_screen_phrase_settings,
     save_send_delay_settings,
+    validate_auto_heal_items,
 )
 
 
@@ -51,8 +56,8 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "screen_phrase_trigger": "",
         "screen_phrase_trigger_region": None,
         "screen_phrase_result_region": None,
-            "screen_phrase_auto_send_result": False,
-            "screen_phrase_source": "ocr",
+        "screen_phrase_auto_send_result": False,
+        "screen_phrase_source": "ocr",
         "chat_trigger_dry_run": True,
         "chat_triggers": [],
         "coordinate_lock_enabled": False,
@@ -64,7 +69,88 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "coordinate_lock_max_distance": 50.0,
         "coordinate_lock_tolerance": 0.75,
         "player_data_url": "http://127.0.0.1:8026/data/player",
+        "auto_heal_enabled": False,
+        "auto_heal_items": [],
     }
+
+
+def test_auto_heal_defaults_are_safe():
+    config = BotConfig()
+
+    assert config.auto_heal_enabled is False
+    assert config.auto_heal_items == ()
+
+
+def test_load_config_preserves_exact_unicode_auto_heal_name(tmp_path):
+    config_path = tmp_path / "config.json"
+    name = ".｡*ﾟ+.*.｡ ʜᴏʟᴏ ᴀɴɴɪᴠ ᴄᴀᴋᴇ ｡+..｡*ﾟ"
+    config_path.write_text(
+        json.dumps(
+            {
+                "auto_heal_enabled": True,
+                "auto_heal_items": [
+                    {
+                        "name": name,
+                        "cooldown_seconds": 30,
+                        "use_duration_seconds": 2.5,
+                        "health_below": 20,
+                        "hunger_below": 8,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.auto_heal_enabled is True
+    assert config.auto_heal_items == (
+        AutoHealItemConfig(name, 30.0, 2.5, 20.0, 8),
+    )
+
+
+def test_save_auto_heal_settings_preserves_unrelated_values(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"dry_run": false}\n', encoding="utf-8")
+    item = AutoHealItemConfig("Steak", 5.0, 2.0, 10.0, 6)
+
+    save_auto_heal_settings(config_path, enabled=True, items=(item,))
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    assert raw["dry_run"] is False
+    assert raw["auto_heal_enabled"] is True
+    assert raw["auto_heal_items"] == [
+        {
+            "name": "Steak",
+            "cooldown_seconds": 5.0,
+            "use_duration_seconds": 2.0,
+            "health_below": 10.0,
+            "hunger_below": 6,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        AutoHealItemConfig("", 1.0, 2.0, 5.0, 0),
+        AutoHealItemConfig("Steak", -1.0, 2.0, 5.0, 0),
+        AutoHealItemConfig("Steak", 1.0, 0.0, 5.0, 0),
+        AutoHealItemConfig("Steak", 1.0, 2.0, 0.0, 0),
+        AutoHealItemConfig("Steak", 1.0, 2.0, 5.0, 21),
+    ],
+)
+def test_validate_auto_heal_items_rejects_invalid_rules(item):
+    with pytest.raises(ValueError):
+        validate_auto_heal_items((item,))
+
+
+def test_validate_auto_heal_items_rejects_duplicate_exact_names():
+    item = AutoHealItemConfig("Steak", 1.0, 2.0, 5.0, 0)
+
+    with pytest.raises(ValueError, match="unique"):
+        validate_auto_heal_items((item, item))
 
 
 def test_load_and_save_coordinate_locks(tmp_path):

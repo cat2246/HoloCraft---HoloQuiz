@@ -57,5 +57,7 @@
   ],
   "coordinate_lock_max_distance": 50.0,
   "coordinate_lock_tolerance": 0.75,
-  "player_data_url": "http://127.0.0.1:8026/data/player"
+  "player_data_url": "http://127.0.0.1:8026/data/player",
+  "auto_heal_enabled": false,
+  "auto_heal_items": []
 }
