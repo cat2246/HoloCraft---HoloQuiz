@@ -75,11 +75,6 @@ def configure_scrollable_player_body(
         canvas.itemconfigure(window_id, width=width)
 
     canvas.bind("<Configure>", resize_content)
-    canvas.bind_all(
-        "<MouseWheel>",
-        lambda event: scroll_player_body(canvas, event),
-        add="+",
-    )
     return window_id
 
 
@@ -660,6 +655,7 @@ class PlayerTab:
         self.photos: dict[str, ImageTk.PhotoImage] = {}
         self._prepared_icons: dict[str, Image.Image] = {}
         self._snapshot: PlayerSnapshot | None = None
+        self._mousewheel_binding_id: str | None = None
         self._build()
         self.icon_loader = PlayerIconLoader(
             parent,
@@ -1074,18 +1070,38 @@ class PlayerTab:
         self.error_var.set(f"Refresh failed: {error}")
 
     def activate(self) -> None:
+        self._bind_player_mousewheel()
         self.icon_loader.activate()
         self.poller.activate()
 
     def deactivate(self) -> None:
+        self._unbind_player_mousewheel()
         self.tooltip.hide()
         self.poller.deactivate()
         self.icon_loader.deactivate()
+
+    def _bind_player_mousewheel(self) -> None:
+        if self._mousewheel_binding_id is not None:
+            return
+        root = self.parent.winfo_toplevel()
+        self._mousewheel_binding_id = root.bind(
+            "<MouseWheel>",
+            lambda event: scroll_player_body(self.player_canvas, event),
+            add="+",
+        )
+
+    def _unbind_player_mousewheel(self) -> None:
+        binding_id = getattr(self, "_mousewheel_binding_id", None)
+        if binding_id is None:
+            return
+        self.parent.winfo_toplevel().unbind("<MouseWheel>", binding_id)
+        self._mousewheel_binding_id = None
 
     def refresh(self) -> None:
         self.poller.refresh()
 
     def close(self) -> None:
+        self._unbind_player_mousewheel()
         self.tooltip.hide()
         self.poller.close()
         self.icon_loader.close()

@@ -403,9 +403,6 @@ def test_scrollable_player_body_fills_body_and_tracks_content_size():
         def bind(self, event, callback):
             calls.append(("canvas-bind", event, callback))
 
-        def bind_all(self, event, callback, add):
-            calls.append(("canvas-bind-all", event, callback, add))
-
         def bbox(self, target):
             return (0, 0, 900, 1200)
 
@@ -441,10 +438,6 @@ def test_scrollable_player_body_fills_body_and_tracks_content_size():
     )
     assert any(
         entry[:2] == ("canvas-bind", "<Configure>")
-        for entry in calls
-    )
-    assert any(
-        entry[:2] == ("canvas-bind-all", "<MouseWheel>")
         for entry in calls
     )
 
@@ -613,6 +606,65 @@ def test_player_tab_deactivate_stops_icon_loader_and_hides_tooltip_and_poller():
         "tooltip hidden",
         "poller deactivated",
         "icons deactivated",
+    ]
+
+
+def test_player_tab_mousewheel_binding_follows_active_lifecycle():
+    callbacks = {}
+    actions = []
+
+    class RecordingRoot:
+        def bind(self, event, callback, add):
+            binding_id = f"binding-{len(callbacks) + 1}"
+            callbacks[binding_id] = callback
+            actions.append(("bind", event, add, binding_id))
+            return binding_id
+
+        def unbind(self, event, binding_id):
+            callbacks.pop(binding_id)
+            actions.append(("unbind", event, binding_id))
+
+    class RecordingParent:
+        def __init__(self, root):
+            self.root = root
+
+        def winfo_toplevel(self):
+            return self.root
+
+    root = RecordingRoot()
+    tab = object.__new__(PlayerTab)
+    tab.parent = RecordingParent(root)
+    tab.player_canvas = object()
+    tab._mousewheel_binding_id = None
+    tab.tooltip = SimpleNamespace(hide=lambda: None)
+    tab.poller = SimpleNamespace(
+        activate=lambda: None,
+        deactivate=lambda: None,
+        close=lambda: None,
+    )
+    tab.icon_loader = SimpleNamespace(
+        activate=lambda: None,
+        deactivate=lambda: None,
+        close=lambda: None,
+    )
+
+    tab.activate()
+    tab.activate()
+    assert len(callbacks) == 1
+
+    tab.deactivate()
+    assert callbacks == {}
+
+    tab.activate()
+    assert len(callbacks) == 1
+    tab.close()
+
+    assert callbacks == {}
+    assert [action[0] for action in actions] == [
+        "bind",
+        "unbind",
+        "bind",
+        "unbind",
     ]
 
 
