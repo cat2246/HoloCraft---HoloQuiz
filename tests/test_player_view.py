@@ -3,7 +3,13 @@ import threading
 
 import pytest
 
-from holoquiz.player_view import PlayerPoller
+from holoquiz.player import parse_player_payload
+from holoquiz.player_view import (
+    PlayerPoller,
+    PlayerTab,
+    health_percent,
+    hunger_percent,
+)
 
 
 class FakeScheduler:
@@ -237,3 +243,24 @@ def test_player_poller_fetches_on_worker_but_schedules_and_delivers_on_main_thre
     assert fetch_thread_ids[0] != main_thread_id
     assert scheduler_thread_ids and set(scheduler_thread_ids) == {main_thread_id}
     assert callback_thread_ids == [main_thread_id]
+
+
+def test_player_progress_values_are_clamped():
+    payload = {
+        "api_version": 1,
+        "connected": True,
+        "health": {"current": 33.5, "max": 42.5},
+        "hunger": {"food_level": 20},
+        "inventory": [],
+    }
+    snapshot = parse_player_payload(payload)
+
+    assert health_percent(snapshot) == pytest.approx(78.8235, rel=0.001)
+    assert hunger_percent(snapshot) == 100.0
+
+
+def test_player_tab_public_lifecycle_is_explicit():
+    assert callable(PlayerTab.activate)
+    assert callable(PlayerTab.deactivate)
+    assert callable(PlayerTab.refresh)
+    assert callable(PlayerTab.close)
