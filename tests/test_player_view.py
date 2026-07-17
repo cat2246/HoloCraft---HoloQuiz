@@ -341,6 +341,49 @@ def test_player_progress_values_are_clamped():
     assert hunger_percent(snapshot) == 100.0
 
 
+def test_player_tab_grid_keeps_toolbar_at_top_on_large_windows():
+    calls = []
+
+    class RecordingParent:
+        def columnconfigure(self, index, *, weight):
+            calls.append(("column", index, weight))
+
+        def rowconfigure(self, index, *, weight):
+            calls.append(("row", index, weight))
+
+    player_view.configure_player_tab_grid(RecordingParent())
+
+    assert calls == [
+        ("column", 0, 1),
+        ("row", 0, 0),
+        ("row", 1, 1),
+    ]
+
+
+def test_center_player_body_places_content_between_equal_spacers():
+    calls = []
+
+    class RecordingBody:
+        def columnconfigure(self, index, *, weight):
+            calls.append(("body-column", index, weight))
+
+        def rowconfigure(self, index, *, weight):
+            calls.append(("body-row", index, weight))
+
+    class RecordingContent:
+        def grid(self, **options):
+            calls.append(("content-grid", options))
+
+    player_view.center_player_body(RecordingBody(), RecordingContent())
+
+    assert calls == [
+        ("body-column", 0, 1),
+        ("body-column", 2, 1),
+        ("body-row", 0, 0),
+        ("content-grid", {"row": 0, "column": 1, "sticky": "n"}),
+    ]
+
+
 def test_item_slot_fallback_draws_stack_count_overlay_without_tk():
     operations = []
 

@@ -27,6 +27,19 @@ HEALTH_MAX_FALLBACK = 1.0
 HUNGER_MAXIMUM = 20
 
 
+def configure_player_tab_grid(parent: Any) -> None:
+    parent.columnconfigure(0, weight=1)
+    parent.rowconfigure(0, weight=0)
+    parent.rowconfigure(1, weight=1)
+
+
+def center_player_body(body: Any, content: Any) -> None:
+    body.columnconfigure(0, weight=1)
+    body.columnconfigure(2, weight=1)
+    body.rowconfigure(0, weight=0)
+    content.grid(row=0, column=1, sticky="n")
+
+
 def health_percent(snapshot: PlayerSnapshot) -> float:
     maximum = snapshot.health.maximum or HEALTH_MAX_FALLBACK
     return min(max(snapshot.health.current / maximum * 100.0, 0.0), 100.0)
@@ -405,8 +418,7 @@ class PlayerTab:
         )
 
     def _build(self) -> None:
-        self.parent.columnconfigure(0, weight=1)
-        self.parent.rowconfigure(1, weight=1)
+        configure_player_tab_grid(self.parent)
         toolbar = ttk.Frame(self.parent)
         toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         toolbar.columnconfigure(1, weight=1)
@@ -439,9 +451,15 @@ class PlayerTab:
 
         body = ttk.Frame(self.parent)
         body.grid(row=1, column=0, sticky="nsew")
-        body.columnconfigure(1, weight=1)
 
-        profile = ttk.LabelFrame(body, text="Player overview", padding=10)
+        player_content = ttk.Frame(body)
+        center_player_body(body, player_content)
+
+        profile = ttk.LabelFrame(
+            player_content,
+            text="Player overview",
+            padding=10,
+        )
         profile.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
         # TODO: Replace this placeholder when /data/player exposes a player
         # username or UUID that can be resolved to a real skin.
@@ -468,7 +486,7 @@ class PlayerTab:
         self.offhand_slot = ItemSlotWidget(profile, self.tooltip)
         self.offhand_slot.grid(row=3, column=2, padx=(8, 0))
 
-        content = ttk.Frame(body)
+        content = ttk.Frame(player_content)
         content.grid(row=0, column=1, sticky="nsew")
         stats = ttk.LabelFrame(content, text="Vitals", padding=10)
         stats.grid(row=0, column=0, sticky="ew", pady=(0, 10))
