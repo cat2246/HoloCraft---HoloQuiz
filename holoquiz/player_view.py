@@ -8,10 +8,11 @@ from io import BytesIO
 import queue
 import tkinter as tk
 from tkinter import ttk
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from PIL import Image, ImageTk
 
+from holoquiz.config import AutoHealItemConfig, validate_auto_heal_item
 from holoquiz.player import (
     InventorySlot,
     ItemIconClient,
@@ -49,6 +50,37 @@ def hunger_percent(snapshot: PlayerSnapshot) -> float:
     return min(
         max(snapshot.hunger.food_level / HUNGER_MAXIMUM * 100.0, 0.0),
         100.0,
+    )
+
+
+def parse_auto_heal_form(
+    name: str,
+    cooldown: str,
+    duration: str,
+    health: str,
+    hunger: str,
+) -> AutoHealItemConfig:
+    try:
+        item = AutoHealItemConfig(
+            name=name,
+            cooldown_seconds=float(cooldown),
+            use_duration_seconds=(
+                float(duration) if duration.strip() else 2.0
+            ),
+            health_below=float(health or 0),
+            hunger_below=int(hunger or 0),
+        )
+    except ValueError as error:
+        raise ValueError("Auto Heal values must be numeric.") from error
+    return validate_auto_heal_item(item)
+
+
+def format_auto_heal_rule(item: AutoHealItemConfig) -> str:
+    return (
+        f"Cooldown: {item.cooldown_seconds:g}s   "
+        f"Use: {item.use_duration_seconds:g}s   "
+        f"Health < {item.health_below:g}   "
+        f"Hunger < {item.hunger_below:g}"
     )
 
 
@@ -322,8 +354,15 @@ class ItemTooltip:
 
 
 class ItemSlotWidget:
-    def __init__(self, parent: tk.Misc, tooltip: ItemTooltip) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        tooltip: ItemTooltip,
+        *,
+        on_right_click: Callable[[InventorySlot], None] | None = None,
+    ) -> None:
         self.tooltip = tooltip
+        self.on_right_click = on_right_click
         self.canvas = tk.Canvas(
             parent,
             width=SLOT_SIZE,
@@ -339,6 +378,7 @@ class ItemSlotWidget:
             "<Leave>",
             lambda _event: self.tooltip.hide(self.canvas),
         )
+        self.canvas.bind("<Button-3>", self._on_right_click)
 
     def grid(self, **kwargs: Any) -> None:
         self.canvas.grid(**kwargs)
@@ -388,9 +428,133 @@ class ItemSlotWidget:
         if self.slot is not None and not self.slot.item.empty:
             self.tooltip.show(self.canvas, format_item_tooltip(self.slot))
 
+    def _on_right_click(self, _event: tk.Event | None) -> None:
+        if (
+            self.on_right_click is not None
+            and self.slot is not None
+            and not self.slot.item.empty
+        ):
+            self.on_right_click(self.slot)
+
+
+class AutoHealItemDialog:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        name: str,
+        existing: AutoHealItemConfig | None,
+        on_save: Callable[[AutoHealItemConfig], None],
+    ) -> None:
+        self.on_save = on_save
+        self.window = tk.Toplevel(parent)
+        self.window.title("Auto Heal item")
+        self.window.transient(parent.winfo_toplevel())
+        self.window.resizable(False, False)
+        self.name = name
+        self.cooldown_var = tk.StringVar(
+            value=f"{existing.cooldown_seconds:g}" if existing else "0"
+        )
+        self.duration_var = tk.StringVar(
+            value=f"{existing.use_duration_seconds:g}" if existing else "2"
+        )
+        self.health_var = tk.StringVar(
+            value=f"{existing.health_below:g}" if existing else "0"
+        )
+        self.hunger_var = tk.StringVar(
+            value=f"{existing.hunger_below:g}" if existing else "0"
+        )
+        self.error_var = tk.StringVar(value="")
+
+        frame = ttk.Frame(self.window, padding=12)
+        frame.grid(row=0, column=0, sticky="nsew")
+        ttk.Label(frame, text="Item").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, text=name, wraplength=420).grid(
+            row=0,
+            column=1,
+            sticky="w",
+            padx=(8, 0),
+        )
+        fields = (
+            ("Cooldown time (seconds)", self.cooldown_var),
+            ("Use duration (seconds)", self.duration_var),
+            ('Use when health below "x"', self.health_var),
+            ('Use when hunger below "x"', self.hunger_var),
+        )
+        for row, (label, variable) in enumerate(fields, start=1):
+            ttk.Label(frame, text=label).grid(
+                row=row,
+                column=0,
+                sticky="w",
+            )
+            ttk.Entry(frame, textvariable=variable, width=14).grid(
+                row=row,
+                column=1,
+                sticky="w",
+                padx=(8, 0),
+                pady=2,
+            )
+        ttk.Label(
+            frame,
+            textvariable=self.error_var,
+            foreground="#b42318",
+        ).grid(
+            row=5,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            pady=(6, 0),
+        )
+        buttons = ttk.Frame(frame)
+        buttons.grid(
+            row=6,
+            column=0,
+            columnspan=2,
+            sticky="e",
+            pady=(10, 0),
+        )
+        ttk.Button(
+            buttons,
+            text="Cancel",
+            command=self.window.destroy,
+        ).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(buttons, text="Save", command=self._save).grid(
+            row=0,
+            column=1,
+        )
+        self.window.grab_set()
+
+    def _save(self) -> None:
+        try:
+            item = parse_auto_heal_form(
+                self.name,
+                self.cooldown_var.get(),
+                self.duration_var.get(),
+                self.health_var.get(),
+                self.hunger_var.get(),
+            )
+        except ValueError as error:
+            self.error_var.set(str(error))
+            return
+        self.on_save(item)
+        self.window.destroy()
+
 
 class PlayerTab:
-    def __init__(self, parent: ttk.Frame, *, player_url: str) -> None:
+    def __init__(
+        self,
+        parent: ttk.Frame,
+        *,
+        player_url: str,
+        auto_heal_enabled: bool = False,
+        auto_heal_items: Sequence[AutoHealItemConfig] = (),
+        on_auto_heal_enabled_changed: Callable[[bool], None] | None = None,
+        on_auto_heal_items_changed: Callable[
+            [tuple[AutoHealItemConfig, ...]],
+            None,
+        ]
+        | None = None,
+    ) -> None:
         self.parent = parent
         self.player_client = PlayerOverviewClient(player_url)
         self.icon_client = ItemIconClient()
@@ -400,6 +564,16 @@ class PlayerTab:
         self.hunger_var = tk.StringVar(value="Hunger: --")
         self.details_var = tk.StringVar(value="")
         self.error_var = tk.StringVar(value="")
+        self.auto_heal_items = tuple(auto_heal_items)
+        self.on_auto_heal_enabled_changed = (
+            on_auto_heal_enabled_changed or (lambda _enabled: None)
+        )
+        self.on_auto_heal_items_changed = (
+            on_auto_heal_items_changed or (lambda _items: None)
+        )
+        self.auto_heal_enabled_var = tk.BooleanVar(
+            value=auto_heal_enabled
+        )
         self.tooltip = ItemTooltip(parent)
         self.photos: dict[str, ImageTk.PhotoImage] = {}
         self._prepared_icons: dict[str, Image.Image] = {}
@@ -479,11 +653,20 @@ class PlayerTab:
             justify="center",
         )
         self.armor_slots = [
-            ItemSlotWidget(profile, self.tooltip) for _ in range(4)
+            ItemSlotWidget(
+                profile,
+                self.tooltip,
+                on_right_click=self._open_auto_heal_dialog,
+            )
+            for _ in range(4)
         ]
         for row, slot in enumerate(self.armor_slots):
             slot.grid(row=row, column=0, pady=2)
-        self.offhand_slot = ItemSlotWidget(profile, self.tooltip)
+        self.offhand_slot = ItemSlotWidget(
+            profile,
+            self.tooltip,
+            on_right_click=self._open_auto_heal_dialog,
+        )
         self.offhand_slot.grid(row=3, column=2, padx=(8, 0))
 
         content = ttk.Frame(player_content)
@@ -514,12 +697,22 @@ class PlayerTab:
         inventory = ttk.LabelFrame(content, text="Inventory", padding=8)
         inventory.grid(row=1, column=0, sticky="nw")
         self.main_slots = [
-            ItemSlotWidget(inventory, self.tooltip) for _ in range(27)
+            ItemSlotWidget(
+                inventory,
+                self.tooltip,
+                on_right_click=self._open_auto_heal_dialog,
+            )
+            for _ in range(27)
         ]
         for index, slot in enumerate(self.main_slots):
             slot.grid(row=index // 9, column=index % 9, padx=1, pady=1)
         self.hotbar_slots = [
-            ItemSlotWidget(inventory, self.tooltip) for _ in range(9)
+            ItemSlotWidget(
+                inventory,
+                self.tooltip,
+                on_right_click=self._open_auto_heal_dialog,
+            )
+            for _ in range(9)
         ]
         for index, slot in enumerate(self.hotbar_slots):
             slot.grid(row=4, column=index, padx=1, pady=(8, 1))
@@ -533,6 +726,117 @@ class PlayerTab:
         self.extra_label.grid(row=0, column=0, sticky="w")
         self.extra_label.grid_remove()
         self.extra_slots: list[ItemSlotWidget] = []
+        self._build_auto_heal_section(content)
+
+    def _build_auto_heal_section(self, content: ttk.Frame) -> None:
+        section = ttk.LabelFrame(content, text="Auto Heal", padding=8)
+        section.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        section.columnconfigure(0, weight=1)
+        ttk.Checkbutton(
+            section,
+            text="Enable Auto Heal",
+            variable=self.auto_heal_enabled_var,
+            command=self._on_auto_heal_toggle,
+        ).grid(row=0, column=0, sticky="w")
+        self.auto_heal_empty_label = ttk.Label(
+            section,
+            text="Right-click an inventory item to add an Auto Heal rule.",
+            style="Muted.TLabel",
+        )
+        self.auto_heal_empty_label.grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(6, 0),
+        )
+        self.auto_heal_rows_frame = ttk.Frame(section)
+        self.auto_heal_rows_frame.grid(
+            row=2,
+            column=0,
+            sticky="ew",
+            pady=(6, 0),
+        )
+        self.auto_heal_rows_frame.columnconfigure(0, weight=1)
+        self._refresh_auto_heal_rows()
+
+    def _on_auto_heal_toggle(self) -> None:
+        self.on_auto_heal_enabled_changed(
+            self.auto_heal_enabled_var.get()
+        )
+
+    def _open_auto_heal_dialog(self, slot: InventorySlot) -> None:
+        name = slot.item.name
+        existing = next(
+            (
+                item
+                for item in self.auto_heal_items
+                if item.name == name
+            ),
+            None,
+        )
+        AutoHealItemDialog(
+            self.parent,
+            name=name,
+            existing=existing,
+            on_save=self._save_auto_heal_item,
+        )
+
+    def _save_auto_heal_item(self, item: AutoHealItemConfig) -> None:
+        updated = []
+        replaced = False
+        for existing in self.auto_heal_items:
+            if existing.name == item.name:
+                updated.append(item)
+                replaced = True
+            else:
+                updated.append(existing)
+        if not replaced:
+            updated.append(item)
+        self.auto_heal_items = tuple(updated)
+        self._refresh_auto_heal_rows()
+        self.on_auto_heal_items_changed(self.auto_heal_items)
+
+    def _remove_auto_heal_item(self, name: str) -> None:
+        self.auto_heal_items = tuple(
+            item for item in self.auto_heal_items if item.name != name
+        )
+        self._refresh_auto_heal_rows()
+        self.on_auto_heal_items_changed(self.auto_heal_items)
+
+    def _refresh_auto_heal_rows(self) -> None:
+        for child in self.auto_heal_rows_frame.winfo_children():
+            child.destroy()
+        if not self.auto_heal_items:
+            self.auto_heal_empty_label.grid()
+            return
+        self.auto_heal_empty_label.grid_remove()
+        for row_index, item in enumerate(self.auto_heal_items):
+            row = ttk.Frame(self.auto_heal_rows_frame)
+            row.grid(row=row_index, column=0, sticky="ew", pady=2)
+            row.columnconfigure(0, weight=1)
+            ttk.Label(row, text=item.name, wraplength=300).grid(
+                row=0,
+                column=0,
+                sticky="w",
+            )
+            ttk.Label(
+                row,
+                text=format_auto_heal_rule(item),
+                style="Muted.TLabel",
+            ).grid(row=1, column=0, sticky="w")
+            ttk.Button(
+                row,
+                text="Remove",
+                command=partial(
+                    self._remove_auto_heal_item,
+                    item.name,
+                ),
+            ).grid(
+                row=0,
+                column=1,
+                rowspan=2,
+                padx=(8, 0),
+            )
 
     def _load_icon(self, item_id: str) -> Image.Image:
         png = self.icon_client.get_icon(item_id)
@@ -599,7 +903,11 @@ class PlayerTab:
         else:
             self.extra_label.grid_remove()
         for index, slot in enumerate(layout.extra):
-            widget = ItemSlotWidget(self.extra_frame, self.tooltip)
+            widget = ItemSlotWidget(
+                self.extra_frame,
+                self.tooltip,
+                on_right_click=self._open_auto_heal_dialog,
+            )
             widget.grid(row=1, column=index, padx=1)
             self._render_slot(widget, slot)
             self.extra_slots.append(widget)

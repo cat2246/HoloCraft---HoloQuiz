@@ -1,17 +1,21 @@
 from concurrent.futures import Future, ThreadPoolExecutor
 import threading
+from types import SimpleNamespace
 
 import pytest
 
 import holoquiz.player_view as player_view
+from holoquiz.config import AutoHealItemConfig
 from holoquiz.player import InventorySlot, PlayerItem, parse_player_payload
 from holoquiz.player_view import (
+    format_auto_heal_rule,
     ItemSlotWidget,
     ItemTooltip,
     PlayerPoller,
     PlayerTab,
     health_percent,
     hunger_percent,
+    parse_auto_heal_form,
 )
 
 
@@ -522,3 +526,81 @@ def test_item_tooltip_ignores_hide_from_non_owner():
     assert actions == ["destroyed"]
     assert tooltip.window is None
     assert tooltip.owner is None
+
+
+def test_parse_auto_heal_form_uses_default_two_second_duration():
+    item = parse_auto_heal_form("Steak", "5", "", "10", "0")
+
+    assert item == AutoHealItemConfig("Steak", 5.0, 2.0, 10.0, 0)
+
+
+def test_parse_auto_heal_form_rejects_disabled_thresholds():
+    with pytest.raises(ValueError, match="threshold"):
+        parse_auto_heal_form("Steak", "5", "2", "0", "0")
+
+
+def test_item_slot_right_click_reports_only_occupied_slot():
+    selected = []
+    widget = object.__new__(ItemSlotWidget)
+    widget.slot = InventorySlot(
+        8,
+        "hotbar",
+        PlayerItem(empty=False, name="Steak"),
+    )
+    widget.on_right_click = selected.append
+
+    widget._on_right_click(None)
+    widget.slot = InventorySlot(7, "hotbar")
+    widget._on_right_click(None)
+
+    assert [slot.item.name for slot in selected] == ["Steak"]
+
+
+def test_player_tab_upserts_rule_by_exact_name_and_notifies():
+    saved = []
+    tab = object.__new__(PlayerTab)
+    tab.auto_heal_items = (
+        AutoHealItemConfig("Steak", 5, 2, 10, 0),
+    )
+    tab.on_auto_heal_items_changed = saved.append
+    tab._refresh_auto_heal_rows = lambda: None
+    updated = AutoHealItemConfig("Steak", 9, 2.5, 12, 4)
+
+    tab._save_auto_heal_item(updated)
+
+    assert tab.auto_heal_items == (updated,)
+    assert saved == [(updated,)]
+
+
+def test_player_tab_removes_exact_rule_and_notifies():
+    saved = []
+    steak = AutoHealItemConfig("Steak", 5, 2, 10, 0)
+    potion = AutoHealItemConfig("Potion", 9, 2.5, 12, 4)
+    tab = object.__new__(PlayerTab)
+    tab.auto_heal_items = (steak, potion)
+    tab.on_auto_heal_items_changed = saved.append
+    tab._refresh_auto_heal_rows = lambda: None
+
+    tab._remove_auto_heal_item("Steak")
+
+    assert tab.auto_heal_items == (potion,)
+    assert saved == [(potion,)]
+
+
+def test_player_tab_auto_heal_toggle_notifies_current_value():
+    saved = []
+    tab = object.__new__(PlayerTab)
+    tab.auto_heal_enabled_var = SimpleNamespace(get=lambda: True)
+    tab.on_auto_heal_enabled_changed = saved.append
+
+    tab._on_auto_heal_toggle()
+
+    assert saved == [True]
+
+
+def test_format_auto_heal_rule_lists_all_values():
+    item = AutoHealItemConfig("Steak", 5, 2.5, 10, 6)
+
+    assert format_auto_heal_rule(item) == (
+        "Cooldown: 5s   Use: 2.5s   Health < 10   Hunger < 6"
+    )
