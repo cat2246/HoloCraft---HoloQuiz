@@ -162,6 +162,16 @@ def test_runtime_controls_track_program_enabled():
     assert controls.snapshot().program_enabled is False
 
 
+def test_runtime_controls_track_holoquiz_enabled():
+    controls = RuntimeControls.from_config(BotConfig(holoquiz_enabled=True))
+
+    controls.set_holoquiz_enabled(False)
+
+    assert controls.is_holoquiz_enabled() is False
+    assert controls.snapshot().holoquiz_enabled is False
+    assert controls.get_config().holoquiz_enabled is False
+
+
 def test_runtime_controls_track_function_enabled_by_key():
     controls = RuntimeControls.from_config(BotConfig())
 

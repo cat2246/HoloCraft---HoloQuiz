@@ -37,6 +37,7 @@ class FunctionRegistry:
 @dataclass(frozen=True)
 class RuntimeSnapshot:
     program_enabled: bool
+    holoquiz_enabled: bool
     dry_run: bool
     answer_sound_enabled: bool
     auto_answer_enabled: bool
@@ -67,6 +68,7 @@ class RuntimeControls:
         self.registry = registry or default_function_registry()
         self._lock = RLock()
         self._program_enabled = program_enabled and base_config.program_enabled
+        self._holoquiz_enabled = base_config.holoquiz_enabled
         self._dry_run = base_config.dry_run
         self._answer_sound_enabled = base_config.answer_sound_enabled
         self._auto_answer_enabled = base_config.auto_answer_enabled
@@ -112,6 +114,7 @@ class RuntimeControls:
             return replace(
                 self._base_config,
                 program_enabled=self._program_enabled,
+                holoquiz_enabled=self._holoquiz_enabled,
                 auto_answer_enabled=self._auto_answer_enabled,
                 dry_run=self._dry_run,
                 answer_sound_enabled=self._answer_sound_enabled,
@@ -136,6 +139,7 @@ class RuntimeControls:
         with self._lock:
             return RuntimeSnapshot(
                 program_enabled=self._program_enabled,
+                holoquiz_enabled=self._holoquiz_enabled,
                 dry_run=self._dry_run,
                 answer_sound_enabled=self._answer_sound_enabled,
                 auto_answer_enabled=self._auto_answer_enabled,
@@ -165,6 +169,14 @@ class RuntimeControls:
     def set_program_enabled(self, enabled: bool) -> None:
         with self._lock:
             self._program_enabled = enabled
+
+    def is_holoquiz_enabled(self) -> bool:
+        with self._lock:
+            return self._holoquiz_enabled
+
+    def set_holoquiz_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._holoquiz_enabled = enabled
 
     def set_dry_run(self, enabled: bool) -> None:
         with self._lock:

@@ -63,6 +63,7 @@ class CoordinateLockConfig:
 class BotConfig:
     log_path: Path | None = None
     program_enabled: bool = True
+    holoquiz_enabled: bool = True
     auto_answer_enabled: bool = True
     dry_run: bool = True
     answer_sound_enabled: bool = True
@@ -219,6 +220,41 @@ def save_answer_sound_setting(path: Path, *, enabled: bool) -> None:
             raise ValueError("Config root must be a JSON object.")
 
     raw_config["answer_sound_enabled"] = enabled
+    path.write_text(
+        json.dumps(raw_config, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def save_holoquiz_enabled_setting(path: Path, *, enabled: bool) -> None:
+    raw_config: dict[str, Any] = {}
+    if path.exists():
+        raw_config = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(raw_config, dict):
+            raise ValueError("Config root must be a JSON object.")
+
+    raw_config["holoquiz_enabled"] = enabled
+    path.write_text(
+        json.dumps(raw_config, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def save_send_delay_settings(
+    path: Path,
+    *,
+    min_seconds: float,
+    max_seconds: float,
+) -> None:
+    raw_config: dict[str, Any] = {}
+    if path.exists():
+        raw_config = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(raw_config, dict):
+            raise ValueError("Config root must be a JSON object.")
+
+    raw_config["send_delay_seconds"] = min_seconds
+    raw_config["send_delay_min_seconds"] = min_seconds
+    raw_config["send_delay_max_seconds"] = max_seconds
     path.write_text(
         json.dumps(raw_config, indent=2) + "\n",
         encoding="utf-8",

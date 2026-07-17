@@ -14,7 +14,9 @@ from holoquiz.config import (
     save_answer_sound_setting,
     save_chat_triggers_settings,
     save_coordinate_lock_settings,
+    save_holoquiz_enabled_setting,
     save_screen_phrase_settings,
+    save_send_delay_settings,
 )
 
 
@@ -28,6 +30,7 @@ def test_load_config_creates_default_when_missing(tmp_path):
     assert json.loads(config_path.read_text(encoding="utf-8")) == {
         "log_path": "",
         "program_enabled": True,
+        "holoquiz_enabled": True,
         "auto_answer_enabled": True,
         "dry_run": True,
         "answer_sound_enabled": True,
@@ -225,6 +228,7 @@ def test_load_config_overrides_defaults(tmp_path):
 {
   "log_path": "C:/Minecraft/logs/latest.log",
   "program_enabled": false,
+  "holoquiz_enabled": false,
   "auto_answer_enabled": false,
   "dry_run": false,
   "answer_sound_enabled": false,
@@ -244,6 +248,7 @@ def test_load_config_overrides_defaults(tmp_path):
 
     assert config.log_path == Path("C:/Minecraft/logs/latest.log")
     assert config.program_enabled is False
+    assert config.holoquiz_enabled is False
     assert config.auto_answer_enabled is False
     assert config.dry_run is False
     assert config.answer_sound_enabled is False
@@ -264,6 +269,47 @@ def test_load_config_without_answer_sound_setting_defaults_enabled(tmp_path):
     config = load_config(config_path)
 
     assert config.answer_sound_enabled is True
+
+
+def test_load_config_without_holoquiz_setting_defaults_enabled(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"dry_run": True}), encoding="utf-8")
+
+    assert load_config(config_path).holoquiz_enabled is True
+
+
+def test_save_holoquiz_enabled_setting_preserves_other_values(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"dry_run": True, "send_delay_min_seconds": 0.5}),
+        encoding="utf-8",
+    )
+
+    save_holoquiz_enabled_setting(config_path, enabled=False)
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "dry_run": True,
+        "send_delay_min_seconds": 0.5,
+        "holoquiz_enabled": False,
+    }
+
+
+def test_save_send_delay_settings_preserves_other_values(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"dry_run": True, "holoquiz_enabled": False}),
+        encoding="utf-8",
+    )
+
+    save_send_delay_settings(config_path, min_seconds=1.0, max_seconds=3.0)
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "dry_run": True,
+        "holoquiz_enabled": False,
+        "send_delay_seconds": 1.0,
+        "send_delay_min_seconds": 1.0,
+        "send_delay_max_seconds": 3.0,
+    }
 
 
 def test_save_answer_sound_setting_preserves_other_config_values(tmp_path):

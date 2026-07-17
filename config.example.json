@@ -1,6 +1,7 @@
 {
   "log_path": "",
   "program_enabled": true,
+  "holoquiz_enabled": true,
   "auto_answer_enabled": true,
   "dry_run": true,
   "answer_sound_enabled": true,
