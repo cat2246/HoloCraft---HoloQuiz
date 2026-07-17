@@ -110,6 +110,13 @@ def coordinate_lock_target_summary(lock: CoordinateLockConfig) -> str:
     return "None"
 
 
+def player_tab_auto_heal_options(config: BotConfig) -> dict[str, Any]:
+    return {
+        "auto_heal_enabled": config.auto_heal_enabled,
+        "auto_heal_items": config.auto_heal_items,
+    }
+
+
 class ControlPanelController:
     def __init__(
         self,
@@ -1489,11 +1496,13 @@ class HoloQuizControlPanel:
         ).grid(row=0, column=2)
         self._refresh_coordinate_lock_rows()
 
+        auto_heal_options = player_tab_auto_heal_options(
+            self.controls.get_config()
+        )
         self.player_view = PlayerTab(
             player_tab,
             player_url=self.controls.get_config().player_data_url,
-            auto_heal_enabled=config.auto_heal_enabled,
-            auto_heal_items=config.auto_heal_items,
+            **auto_heal_options,
             on_auto_heal_enabled_changed=(
                 self._on_auto_heal_enabled_changed
             ),

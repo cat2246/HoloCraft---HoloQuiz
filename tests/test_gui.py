@@ -357,6 +357,19 @@ def test_auto_heal_items_update_runtime_and_persist(tmp_path):
     assert persisted["auto_heal_items"][0]["name"] == "Steak"
 
 
+def test_player_tab_auto_heal_options_come_from_runtime_config():
+    item = AutoHealItemConfig("Steak", 5, 2, 10, 6)
+    config = BotConfig(
+        auto_heal_enabled=True,
+        auto_heal_items=(item,),
+    )
+
+    assert gui.player_tab_auto_heal_options(config) == {
+        "auto_heal_enabled": True,
+        "auto_heal_items": (item,),
+    }
+
+
 def test_chat_trigger_form_requires_macro_or_sound():
     panel = object.__new__(gui.HoloQuizControlPanel)
     panel.chat_trigger_trigger_var = SimpleNamespace(get=lambda: "Wake up!")

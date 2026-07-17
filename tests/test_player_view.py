@@ -15,6 +15,7 @@ from holoquiz.player_view import (
     PlayerTab,
     health_percent,
     hunger_percent,
+    layout_player_sections,
     parse_auto_heal_form,
 )
 
@@ -385,6 +386,72 @@ def test_center_player_body_places_content_between_equal_spacers():
         ("body-column", 2, 1),
         ("body-row", 0, 0),
         ("content-grid", {"row": 0, "column": 1, "sticky": "n"}),
+    ]
+
+
+def test_player_sections_place_auto_heal_beside_vitals_to_fit_window():
+    calls = []
+
+    class RecordingContent:
+        def columnconfigure(self, index, weight):
+            calls.append(("column", index, weight))
+
+    class RecordingSection:
+        def __init__(self, name):
+            self.name = name
+
+        def grid(self, **options):
+            calls.append((self.name, options))
+
+    layout_player_sections(
+        RecordingContent(),
+        RecordingSection("stats"),
+        RecordingSection("inventory"),
+        RecordingSection("extra"),
+        RecordingSection("auto-heal"),
+    )
+
+    assert calls == [
+        ("column", 0, 1),
+        ("column", 1, 1),
+        (
+            "stats",
+            {
+                "row": 0,
+                "column": 0,
+                "sticky": "nsew",
+                "pady": (0, 10),
+            },
+        ),
+        (
+            "auto-heal",
+            {
+                "row": 0,
+                "column": 1,
+                "sticky": "nsew",
+                "padx": (10, 0),
+                "pady": (0, 10),
+            },
+        ),
+        (
+            "inventory",
+            {
+                "row": 1,
+                "column": 0,
+                "columnspan": 2,
+                "sticky": "nw",
+            },
+        ),
+        (
+            "extra",
+            {
+                "row": 2,
+                "column": 0,
+                "columnspan": 2,
+                "sticky": "w",
+                "pady": (8, 0),
+            },
+        ),
     ]
 
 

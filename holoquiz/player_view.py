@@ -41,6 +41,38 @@ def center_player_body(body: Any, content: Any) -> None:
     content.grid(row=0, column=1, sticky="n")
 
 
+def layout_player_sections(
+    content: Any,
+    stats: Any,
+    inventory: Any,
+    extra: Any,
+    auto_heal: Any,
+) -> None:
+    content.columnconfigure(0, weight=1)
+    content.columnconfigure(1, weight=1)
+    stats.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
+    auto_heal.grid(
+        row=0,
+        column=1,
+        sticky="nsew",
+        padx=(10, 0),
+        pady=(0, 10),
+    )
+    inventory.grid(
+        row=1,
+        column=0,
+        columnspan=2,
+        sticky="nw",
+    )
+    extra.grid(
+        row=2,
+        column=0,
+        columnspan=2,
+        sticky="w",
+        pady=(8, 0),
+    )
+
+
 def health_percent(snapshot: PlayerSnapshot) -> float:
     maximum = snapshot.health.maximum or HEALTH_MAX_FALLBACK
     return min(max(snapshot.health.current / maximum * 100.0, 0.0), 100.0)
@@ -672,7 +704,6 @@ class PlayerTab:
         content = ttk.Frame(player_content)
         content.grid(row=0, column=1, sticky="nsew")
         stats = ttk.LabelFrame(content, text="Vitals", padding=10)
-        stats.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         stats.columnconfigure(0, weight=1)
         ttk.Label(stats, textvariable=self.health_var).grid(
             row=0,
@@ -695,7 +726,6 @@ class PlayerTab:
         ).grid(row=4, column=0, sticky="w")
 
         inventory = ttk.LabelFrame(content, text="Inventory", padding=8)
-        inventory.grid(row=1, column=0, sticky="nw")
         self.main_slots = [
             ItemSlotWidget(
                 inventory,
@@ -717,7 +747,6 @@ class PlayerTab:
         for index, slot in enumerate(self.hotbar_slots):
             slot.grid(row=4, column=index, padx=1, pady=(8, 1))
         self.extra_frame = ttk.Frame(content)
-        self.extra_frame.grid(row=2, column=0, sticky="w", pady=(8, 0))
         self.extra_label = ttk.Label(
             self.extra_frame,
             text="Extra",
@@ -727,10 +756,17 @@ class PlayerTab:
         self.extra_label.grid_remove()
         self.extra_slots: list[ItemSlotWidget] = []
         self._build_auto_heal_section(content)
+        layout_player_sections(
+            content,
+            stats,
+            inventory,
+            self.extra_frame,
+            self.auto_heal_section,
+        )
 
     def _build_auto_heal_section(self, content: ttk.Frame) -> None:
         section = ttk.LabelFrame(content, text="Auto Heal", padding=8)
-        section.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        self.auto_heal_section = section
         section.columnconfigure(0, weight=1)
         ttk.Checkbutton(
             section,
@@ -814,7 +850,7 @@ class PlayerTab:
             row = ttk.Frame(self.auto_heal_rows_frame)
             row.grid(row=row_index, column=0, sticky="ew", pady=2)
             row.columnconfigure(0, weight=1)
-            ttk.Label(row, text=item.name, wraplength=300).grid(
+            ttk.Label(row, text=item.name, wraplength=200).grid(
                 row=0,
                 column=0,
                 sticky="w",
@@ -823,6 +859,7 @@ class PlayerTab:
                 row,
                 text=format_auto_heal_rule(item),
                 style="Muted.TLabel",
+                wraplength=220,
             ).grid(row=1, column=0, sticky="w")
             ttk.Button(
                 row,
