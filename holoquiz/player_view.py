@@ -27,6 +27,7 @@ SLOT_SIZE = 48
 HEALTH_MAX_FALLBACK = 1.0
 HUNGER_MAXIMUM = 20
 AUTO_HEAL_LIST_HEIGHT = 132
+PLAYER_PAGE_MAX_WIDTH = 1100
 
 
 def configure_player_tab_grid(parent: Any) -> None:
@@ -35,42 +36,83 @@ def configure_player_tab_grid(parent: Any) -> None:
     parent.rowconfigure(1, weight=1)
 
 
-def center_player_body(body: Any, content: Any) -> None:
+def scroll_player_body(canvas: Any, event: Any) -> None:
+    pointer_x = canvas.winfo_pointerx() - canvas.winfo_rootx()
+    pointer_y = canvas.winfo_pointery() - canvas.winfo_rooty()
+    if not (
+        0 <= pointer_x < canvas.winfo_width()
+        and 0 <= pointer_y < canvas.winfo_height()
+    ):
+        return
+    units = -int(event.delta / 120)
+    if units:
+        canvas.yview_scroll(units, "units")
+
+
+def configure_scrollable_player_body(
+    body: Any,
+    canvas: Any,
+    scrollbar: Any,
+    content: Any,
+) -> int:
     body.columnconfigure(0, weight=1)
-    body.columnconfigure(2, weight=1)
-    body.rowconfigure(0, weight=0)
-    content.grid(row=0, column=1, sticky="n")
+    body.rowconfigure(0, weight=1)
+    canvas.grid(row=0, column=0, sticky="nsew")
+    scrollbar.grid(row=0, column=1, sticky="ns")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    window_id = canvas.create_window(
+        (0, 0),
+        window=content,
+        anchor="n",
+    )
+    content.bind(
+        "<Configure>",
+        lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+    )
+
+    def resize_content(event: Any) -> None:
+        width = max(1, min(event.width - 24, PLAYER_PAGE_MAX_WIDTH))
+        canvas.coords(window_id, event.width / 2, 0)
+        canvas.itemconfigure(window_id, width=width)
+
+    canvas.bind("<Configure>", resize_content)
+    canvas.bind_all(
+        "<MouseWheel>",
+        lambda event: scroll_player_body(canvas, event),
+        add="+",
+    )
+    return window_id
 
 
 def layout_player_sections(
     content: Any,
+    profile: Any,
     stats: Any,
     inventory: Any,
-    extra: Any,
     auto_heal: Any,
 ) -> None:
-    content.columnconfigure(0, weight=1)
+    content.columnconfigure(0, weight=0)
     content.columnconfigure(1, weight=1)
-    stats.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
-    auto_heal.grid(
+    profile.grid(
         row=0,
-        column=1,
-        sticky="nsew",
-        padx=(10, 0),
-        pady=(0, 10),
+        column=0,
+        sticky="nw",
+        padx=(0, 12),
+        pady=(0, 12),
     )
+    stats.grid(row=0, column=1, sticky="nsew", pady=(0, 12))
     inventory.grid(
         row=1,
         column=0,
         columnspan=2,
-        sticky="nw",
+        sticky="ew",
+        pady=(0, 12),
     )
-    extra.grid(
+    auto_heal.grid(
         row=2,
         column=0,
         columnspan=2,
-        sticky="w",
-        pady=(8, 0),
+        sticky="ew",
     )
 
 
@@ -695,16 +737,32 @@ class PlayerTab:
 
         body = ttk.Frame(self.parent)
         body.grid(row=1, column=0, sticky="nsew")
-
-        player_content = ttk.Frame(body)
-        center_player_body(body, player_content)
+        self.player_canvas = tk.Canvas(
+            body,
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        self.player_scrollbar = ttk.Scrollbar(
+            body,
+            orient="vertical",
+            command=self.player_canvas.yview,
+        )
+        player_content = ttk.Frame(
+            self.player_canvas,
+            padding=(12, 0, 12, 12),
+        )
+        configure_scrollable_player_body(
+            body,
+            self.player_canvas,
+            self.player_scrollbar,
+            player_content,
+        )
 
         profile = ttk.LabelFrame(
             player_content,
             text="Player overview",
             padding=10,
         )
-        profile.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
         # TODO: Replace this placeholder when /data/player exposes a player
         # username or UUID that can be resolved to a real skin.
         skin = tk.Canvas(
@@ -739,9 +797,11 @@ class PlayerTab:
         )
         self.offhand_slot.grid(row=3, column=2, padx=(8, 0))
 
-        content = ttk.Frame(player_content)
-        content.grid(row=0, column=1, sticky="nsew")
-        stats = ttk.LabelFrame(content, text="Vitals", padding=10)
+        stats = ttk.LabelFrame(
+            player_content,
+            text="Vitals",
+            padding=10,
+        )
         stats.columnconfigure(0, weight=1)
         ttk.Label(stats, textvariable=self.health_var).grid(
             row=0,
@@ -763,7 +823,11 @@ class PlayerTab:
             justify="left",
         ).grid(row=4, column=0, sticky="w")
 
-        inventory = ttk.LabelFrame(content, text="Inventory", padding=8)
+        inventory = ttk.LabelFrame(
+            player_content,
+            text="Inventory",
+            padding=8,
+        )
         self.main_slots = [
             ItemSlotWidget(
                 inventory,
@@ -784,7 +848,14 @@ class PlayerTab:
         ]
         for index, slot in enumerate(self.hotbar_slots):
             slot.grid(row=4, column=index, padx=1, pady=(8, 1))
-        self.extra_frame = ttk.Frame(content)
+        self.extra_frame = ttk.Frame(inventory)
+        self.extra_frame.grid(
+            row=5,
+            column=0,
+            columnspan=9,
+            sticky="w",
+            pady=(8, 0),
+        )
         self.extra_label = ttk.Label(
             self.extra_frame,
             text="Extra",
@@ -793,12 +864,12 @@ class PlayerTab:
         self.extra_label.grid(row=0, column=0, sticky="w")
         self.extra_label.grid_remove()
         self.extra_slots: list[ItemSlotWidget] = []
-        self._build_auto_heal_section(content)
+        self._build_auto_heal_section(player_content)
         layout_player_sections(
-            content,
+            player_content,
+            profile,
             stats,
             inventory,
-            self.extra_frame,
             self.auto_heal_section,
         )
 

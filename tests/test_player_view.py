@@ -10,6 +10,7 @@ from holoquiz.player import InventorySlot, PlayerItem, parse_player_payload
 from holoquiz.player_view import (
     AUTO_HEAL_LIST_HEIGHT,
     configure_auto_heal_rule_list,
+    configure_scrollable_player_body,
     format_auto_heal_rule,
     ItemSlotWidget,
     ItemTooltip,
@@ -19,6 +20,7 @@ from holoquiz.player_view import (
     hunger_percent,
     layout_player_sections,
     parse_auto_heal_form,
+    scroll_player_body,
 )
 
 
@@ -367,7 +369,7 @@ def test_player_tab_grid_keeps_toolbar_at_top_on_large_windows():
     ]
 
 
-def test_center_player_body_places_content_between_equal_spacers():
+def test_scrollable_player_body_fills_body_and_tracks_content_size():
     calls = []
 
     class RecordingBody:
@@ -377,21 +379,95 @@ def test_center_player_body_places_content_between_equal_spacers():
         def rowconfigure(self, index, *, weight):
             calls.append(("body-row", index, weight))
 
-    class RecordingContent:
+    class RecordingScrollbar:
+        def set(self, first, last):
+            calls.append(("scrollbar-set", first, last))
+
         def grid(self, **options):
-            calls.append(("content-grid", options))
+            calls.append(("scrollbar-grid", options))
 
-    player_view.center_player_body(RecordingBody(), RecordingContent())
+    class RecordingContent:
+        def bind(self, event, callback):
+            calls.append(("content-bind", event, callback))
 
-    assert calls == [
-        ("body-column", 0, 1),
-        ("body-column", 2, 1),
-        ("body-row", 0, 0),
-        ("content-grid", {"row": 0, "column": 1, "sticky": "n"}),
-    ]
+    class RecordingCanvas:
+        def configure(self, **options):
+            calls.append(("canvas-configure", options))
+
+        def create_window(self, position, **options):
+            calls.append(("canvas-window", position, options))
+            return 23
+
+        def grid(self, **options):
+            calls.append(("canvas-grid", options))
+
+        def bind(self, event, callback):
+            calls.append(("canvas-bind", event, callback))
+
+        def bind_all(self, event, callback, add):
+            calls.append(("canvas-bind-all", event, callback, add))
+
+        def bbox(self, target):
+            return (0, 0, 900, 1200)
+
+        def itemconfigure(self, window_id, **options):
+            calls.append(("canvas-itemconfigure", window_id, options))
+
+        def coords(self, window_id, x, y):
+            calls.append(("canvas-coords", window_id, x, y))
+
+    body = RecordingBody()
+    canvas = RecordingCanvas()
+    scrollbar = RecordingScrollbar()
+    content = RecordingContent()
+
+    window_id = configure_scrollable_player_body(
+        body, canvas, scrollbar, content
+    )
+
+    assert window_id == 23
+    assert ("body-column", 0, 1) in calls
+    assert ("body-row", 0, 1) in calls
+    assert (
+        "canvas-grid",
+        {"row": 0, "column": 0, "sticky": "nsew"},
+    ) in calls
+    assert (
+        "scrollbar-grid",
+        {"row": 0, "column": 1, "sticky": "ns"},
+    ) in calls
+    assert any(
+        entry[:2] == ("content-bind", "<Configure>")
+        for entry in calls
+    )
+    assert any(
+        entry[:2] == ("canvas-bind", "<Configure>")
+        for entry in calls
+    )
+    assert any(
+        entry[:2] == ("canvas-bind-all", "<MouseWheel>")
+        for entry in calls
+    )
 
 
-def test_player_sections_place_auto_heal_beside_vitals_to_fit_window():
+def test_scroll_player_body_converts_windows_wheel_delta_to_units():
+    calls = []
+    canvas = SimpleNamespace(
+        yview_scroll=lambda amount, unit: calls.append((amount, unit)),
+        winfo_pointerx=lambda: 250,
+        winfo_pointery=lambda: 200,
+        winfo_rootx=lambda: 100,
+        winfo_rooty=lambda: 100,
+        winfo_width=lambda: 500,
+        winfo_height=lambda: 400,
+    )
+
+    scroll_player_body(canvas, SimpleNamespace(delta=-240))
+
+    assert calls == [(2, "units")]
+
+
+def test_player_sections_follow_approved_full_width_order():
     calls = []
 
     class RecordingContent:
@@ -407,32 +483,32 @@ def test_player_sections_place_auto_heal_beside_vitals_to_fit_window():
 
     layout_player_sections(
         RecordingContent(),
+        RecordingSection("profile"),
         RecordingSection("stats"),
         RecordingSection("inventory"),
-        RecordingSection("extra"),
         RecordingSection("auto-heal"),
     )
 
     assert calls == [
-        ("column", 0, 1),
+        ("column", 0, 0),
         ("column", 1, 1),
+        (
+            "profile",
+            {
+                "row": 0,
+                "column": 0,
+                "sticky": "nw",
+                "padx": (0, 12),
+                "pady": (0, 12),
+            },
+        ),
         (
             "stats",
             {
                 "row": 0,
-                "column": 0,
-                "sticky": "nsew",
-                "pady": (0, 10),
-            },
-        ),
-        (
-            "auto-heal",
-            {
-                "row": 0,
                 "column": 1,
                 "sticky": "nsew",
-                "padx": (10, 0),
-                "pady": (0, 10),
+                "pady": (0, 12),
             },
         ),
         (
@@ -441,17 +517,17 @@ def test_player_sections_place_auto_heal_beside_vitals_to_fit_window():
                 "row": 1,
                 "column": 0,
                 "columnspan": 2,
-                "sticky": "nw",
+                "sticky": "ew",
+                "pady": (0, 12),
             },
         ),
         (
-            "extra",
+            "auto-heal",
             {
                 "row": 2,
                 "column": 0,
                 "columnspan": 2,
-                "sticky": "w",
-                "pady": (8, 0),
+                "sticky": "ew",
             },
         ),
     ]
