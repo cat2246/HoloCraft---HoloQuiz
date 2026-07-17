@@ -259,8 +259,54 @@ def test_gui_feature_tabs_group_growing_toolset():
         "Screen Watcher",
         "Chat Triggers",
         "Coordinate Lock",
+        "Player",
         "Activity",
     )
+
+
+def test_player_view_runs_only_when_player_tab_is_selected():
+    calls = []
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.player_view = SimpleNamespace(
+        activate=lambda: calls.append("activate"),
+        deactivate=lambda: calls.append("deactivate"),
+    )
+    panel.notebook = SimpleNamespace(
+        select=lambda: "selected-tab",
+        tab=lambda _tab_id, _option: "Player",
+    )
+
+    panel._on_feature_tab_changed()
+
+    assert calls == ["activate"]
+
+    panel.notebook = SimpleNamespace(
+        select=lambda: "selected-tab",
+        tab=lambda _tab_id, _option: "Activity",
+    )
+    panel._on_feature_tab_changed()
+
+    assert calls == ["activate", "deactivate"]
+
+
+def test_control_panel_close_closes_player_view():
+    calls = []
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.player_view = SimpleNamespace(close=lambda: calls.append("player"))
+    panel.mouse4_hotkey_listener = SimpleNamespace(stop=lambda: calls.append("mouse"))
+    panel.worker = SimpleNamespace(stop=lambda: calls.append("worker"))
+    panel.screen_phrase_worker = SimpleNamespace(stop=lambda: calls.append("screen"))
+    panel.coordinate_lock_worker = SimpleNamespace(
+        stop=lambda: calls.append("coordinate")
+    )
+    panel.root = SimpleNamespace(
+        after=lambda _delay, callback: calls.append(callback),
+        destroy=lambda: None,
+    )
+
+    panel.close()
+
+    assert calls[:5] == ["player", "mouse", "worker", "screen", "coordinate"]
 
 
 def test_chat_trigger_form_requires_macro_or_sound():

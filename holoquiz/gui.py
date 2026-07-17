@@ -37,6 +37,7 @@ from holoquiz.coordinate_lock import CoordinateLockWorker, PlayerDataClient
 from holoquiz.log_tailer import LogTailer
 from holoquiz.minecraft_text_ocr import read_minecraft_text
 from holoquiz.mouse_hotkey import Mouse4HotkeyListener
+from holoquiz.player_view import PlayerTab
 from holoquiz.runner import build_bot, drain_answer_reveals
 from holoquiz.runtime import (
     FIND_ANSWER_FUNCTION,
@@ -64,6 +65,7 @@ FEATURE_TAB_LABELS = (
     "Screen Watcher",
     "Chat Triggers",
     "Coordinate Lock",
+    "Player",
     "Activity",
 )
 BROWSER_SEARCH_STATUS_MAX_CHARS = 58
@@ -883,6 +885,7 @@ class HoloQuizControlPanel:
             screen_tab,
             chat_tab,
             coordinate_tab,
+            player_tab,
             activity_tab,
         ) = (self._add_feature_tab(label) for label in FEATURE_TAB_LABELS)
 
@@ -1476,6 +1479,12 @@ class HoloQuizControlPanel:
         ).grid(row=0, column=2)
         self._refresh_coordinate_lock_rows()
 
+        self.player_view = PlayerTab(
+            player_tab,
+            player_url=self.controls.get_config().player_data_url,
+        )
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_feature_tab_changed)
+
         log_frame = ttk.LabelFrame(activity_tab, text="Runtime log", padding=10)
         log_frame.grid(row=0, column=0, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
@@ -1512,6 +1521,14 @@ class HoloQuizControlPanel:
         )
         scrollbar.grid(row=1, column=1, sticky="ns")
         self.log_text.configure(yscrollcommand=scrollbar.set)
+
+    def _on_feature_tab_changed(self, _event: tk.Event | None = None) -> None:
+        selected_id = self.notebook.select()
+        selected_label = str(self.notebook.tab(selected_id, "text"))
+        if selected_label == "Player":
+            self.player_view.activate()
+        else:
+            self.player_view.deactivate()
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -2272,6 +2289,7 @@ class HoloQuizControlPanel:
         self.log_text.configure(state="disabled")
 
     def close(self) -> None:
+        self.player_view.close()
         self.mouse4_hotkey_listener.stop()
         self.worker.stop()
         self.screen_phrase_worker.stop()
