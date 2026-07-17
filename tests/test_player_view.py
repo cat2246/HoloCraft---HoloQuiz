@@ -16,6 +16,8 @@ from holoquiz.player_view import (
     PlayerTab,
     health_percent,
     hunger_percent,
+    inventory_item_action_labels,
+    item_slot_border,
     layout_auto_heal_rule_actions,
     layout_player_sections,
     parse_auto_heal_form,
@@ -727,7 +729,7 @@ def test_item_tooltip_ignores_hide_from_non_owner():
 def test_parse_auto_heal_form_uses_default_two_second_duration():
     item = parse_auto_heal_form("Steak", "5", "", "10", "0")
 
-    assert item == AutoHealItemConfig("Steak", 5.0, 2.0, 10.0, 0)
+    assert item == AutoHealItemConfig("Steak", 5.0, 2.0, 10, 0)
 
 
 def test_parse_auto_heal_form_rejects_disabled_thresholds():
@@ -735,21 +737,158 @@ def test_parse_auto_heal_form_rejects_disabled_thresholds():
         parse_auto_heal_form("Steak", "5", "2", "0", "0")
 
 
+@pytest.mark.parametrize(
+    ("health", "hunger", "message"),
+    [
+        ("50.5", "0", "health percentage"),
+        ("-1", "0", "health percentage"),
+        ("101", "0", "health percentage"),
+        ("0", "25.5", "hunger percentage"),
+        ("0", "101", "hunger percentage"),
+    ],
+)
+def test_parse_auto_heal_form_rejects_invalid_percentage_text(
+    health,
+    hunger,
+    message,
+):
+    with pytest.raises(ValueError, match=message):
+        parse_auto_heal_form("Steak", "5", "2", health, hunger)
+
+
 def test_item_slot_right_click_reports_only_occupied_slot():
     selected = []
+    event = object()
     widget = object.__new__(ItemSlotWidget)
     widget.slot = InventorySlot(
         8,
         "hotbar",
         PlayerItem(empty=False, name="Steak"),
     )
-    widget.on_right_click = selected.append
+    widget.on_right_click = lambda slot, received: selected.append(
+        (slot, received)
+    )
 
-    widget._on_right_click(None)
+    widget._on_right_click(event)
     widget.slot = InventorySlot(7, "hotbar")
-    widget._on_right_click(None)
+    widget._on_right_click(event)
 
-    assert [slot.item.name for slot in selected] == ["Steak"]
+    assert [(slot.item.name, received) for slot, received in selected] == [
+        ("Steak", event)
+    ]
+
+
+def test_inventory_item_actions_offer_return_only_for_hotbar():
+    hotbar = InventorySlot(
+        0,
+        "hotbar",
+        PlayerItem(empty=False, name="Sword"),
+    )
+    main = InventorySlot(
+        9,
+        "main",
+        PlayerItem(empty=False, name="Steak"),
+    )
+    configured = (AutoHealItemConfig("Steak", 5, 2, 50, 0),)
+
+    assert inventory_item_action_labels(hotbar, configured) == (
+        "Add Auto Heal Item",
+        "Set as Return Item",
+    )
+    assert inventory_item_action_labels(main, configured) == (
+        "Edit Auto Heal Item",
+    )
+
+
+def test_item_slot_border_uses_gold_for_return_item_before_enchantment():
+    enchanted = InventorySlot(
+        0,
+        "hotbar",
+        PlayerItem(empty=False, name="Sword", is_enchanted=True),
+    )
+
+    assert item_slot_border(enchanted, is_return_item=True) == "#d4a017"
+    assert item_slot_border(enchanted, is_return_item=False) == "#9b5de5"
+
+
+def test_player_tab_sets_replaces_and_clears_global_return_item():
+    labels = []
+    button_states = []
+    notifications = []
+    rerenders = []
+    tab = object.__new__(PlayerTab)
+    tab.auto_heal_return_item_name = "Old Sword"
+    tab.on_auto_heal_return_item_changed = notifications.append
+    tab.return_item_var = SimpleNamespace(set=labels.append)
+    tab.return_item_clear_button = SimpleNamespace(
+        configure=lambda **values: button_states.append(values["state"])
+    )
+    tab._rerender_inventory = lambda: rerenders.append(True)
+
+    tab._set_return_item("New Sword")
+    tab._clear_return_item()
+
+    assert labels == ["Return Item: New Sword", "Return Item: None"]
+    assert button_states == ["normal", "disabled"]
+    assert notifications == ["New Sword", ""]
+    assert rerenders == [True, True]
+    assert tab.auto_heal_return_item_name == ""
+
+
+def test_player_tab_item_action_menu_routes_commands(monkeypatch):
+    events = []
+
+    class FakeMenu:
+        def __init__(self):
+            self.commands = []
+
+        def add_command(self, *, label, command):
+            self.commands.append((label, command))
+
+        def add_separator(self):
+            events.append("separator")
+
+        def tk_popup(self, x, y):
+            events.append(("popup", x, y))
+
+        def grab_release(self):
+            events.append("release")
+
+    menu = FakeMenu()
+    monkeypatch.setattr(
+        player_view.tk,
+        "Menu",
+        lambda *_args, **_kwargs: menu,
+    )
+    tab = object.__new__(PlayerTab)
+    tab.parent = object()
+    tab.auto_heal_items = ()
+    tab._show_auto_heal_dialog = lambda name: events.append(("heal", name))
+    tab._set_return_item = lambda name: events.append(("return", name))
+    slot = InventorySlot(
+        0,
+        "hotbar",
+        PlayerItem(empty=False, name="Sword"),
+    )
+
+    tab._open_item_actions(
+        slot,
+        SimpleNamespace(x_root=120, y_root=240),
+    )
+    menu.commands[0][1]()
+    menu.commands[1][1]()
+
+    assert [label for label, _command in menu.commands] == [
+        "Add Auto Heal Item",
+        "Set as Return Item",
+    ]
+    assert events == [
+        "separator",
+        ("popup", 120, 240),
+        "release",
+        ("heal", "Sword"),
+        ("return", "Sword"),
+    ]
 
 
 def test_player_tab_upserts_rule_by_exact_name_and_notifies():
@@ -842,9 +981,9 @@ def test_player_tab_auto_heal_toggle_notifies_current_value():
     assert saved == [True]
 
 
-def test_format_auto_heal_rule_lists_all_values():
-    item = AutoHealItemConfig("Steak", 5, 2.5, 10, 6)
+def test_format_auto_heal_rule_lists_percentage_values():
+    item = AutoHealItemConfig("Steak", 5, 2.5, 50, 30)
 
     assert format_auto_heal_rule(item) == (
-        "Cooldown: 5s   Use: 2.5s   Health < 10   Hunger < 6"
+        "Cooldown: 5s   Use: 2.5s   Health < 50%   Hunger < 30%"
     )
