@@ -149,6 +149,10 @@ class FakeResponse:
         return self.body[:amount]
 
 
+def request_url(request):
+    return getattr(request, "full_url", request)
+
+
 def image_bytes(*, size=(64, 64), color="red", format="PNG"):
     stream = BytesIO()
     mode = "RGB" if format == "JPEG" else "RGBA"
@@ -183,6 +187,24 @@ def test_build_item_icon_url_preserves_namespaced_item_id():
     )
 
 
+def test_item_icon_client_sends_headers_accepted_by_icon_service():
+    requests = []
+
+    def opener(request, *, timeout):
+        requests.append(request)
+        return FakeResponse(png_bytes(), "image/png")
+
+    client = ItemIconClient(opener=opener)
+
+    assert client.get_icon("minecraft:diamond") != client.fallback_icon
+    request = requests[0]
+    assert request.full_url == (
+        "https://blocksitems.com/api/v1/items/minecraft:diamond/icon?size=64"
+    )
+    assert request.get_header("User-agent") == "HoloCraft-Tools/0.1"
+    assert request.get_header("Accept") == "image/png"
+
+
 def test_item_icon_client_downloads_each_item_once():
     requests = []
 
@@ -211,9 +233,10 @@ def test_item_icon_client_returns_cached_fallback_for_invalid_image():
     with Image.open(BytesIO(first)) as image:
         assert image.size == (64, 64)
     assert second == first
-    assert requests == [
+    assert len(requests) == 1
+    assert request_url(requests[0]) == (
         "https://blocksitems.com/api/v1/items/minecraft:missing/icon?size=64"
-    ]
+    )
 
 
 @pytest.mark.parametrize(

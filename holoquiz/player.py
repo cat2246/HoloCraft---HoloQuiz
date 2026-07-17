@@ -6,7 +6,7 @@ import json
 from threading import Event, Lock
 from typing import Any, Callable
 from urllib.parse import quote
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from PIL import Image, ImageDraw
 
@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw
 ITEM_ICON_BASE_URL = "https://blocksitems.com/api/v1/items"
 MINECRAFT_TARGET_VERSION = "1.21.10"
 DEFAULT_MAX_ICON_RESPONSE_BYTES = 1024 * 1024
+ITEM_ICON_USER_AGENT = "HoloCraft-Tools/0.1"
 
 
 @dataclass(frozen=True)
@@ -251,7 +252,14 @@ class ItemIconClient:
     def _fetch_icon(self, item_id: str) -> bytes:
         try:
             url = build_item_icon_url(item_id, self.size)
-            with self._opener(url, timeout=self.timeout_seconds) as response:
+            request = Request(
+                url,
+                headers={
+                    "User-Agent": ITEM_ICON_USER_AGENT,
+                    "Accept": "image/png",
+                },
+            )
+            with self._opener(request, timeout=self.timeout_seconds) as response:
                 content_type = str(response.headers.get("Content-Type", ""))
                 media_type = content_type.partition(";")[0].strip().casefold()
                 if media_type != "image/png":
