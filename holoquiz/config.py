@@ -551,8 +551,10 @@ def _auto_heal_percent_from_json(
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
-        or not math.isfinite(float(value))
-        or not float(value).is_integer()
+        or (
+            isinstance(value, float)
+            and (not math.isfinite(value) or not value.is_integer())
+        )
     ):
         raise ValueError(
             f"Auto Heal {label} percentage must be an integer "

@@ -234,6 +234,7 @@ def test_load_config_rejects_non_string_return_item_name(tmp_path):
     ("field", "value", "message"),
     [
         ("health_percent_below", 10.5, "health percentage"),
+        ("health_percent_below", 10**400, "health percentage"),
         ("health_below", 10.5, "health percentage"),
         ("hunger_percent_below", -1, "hunger percentage"),
         ("hunger_below", 101, "hunger percentage"),
