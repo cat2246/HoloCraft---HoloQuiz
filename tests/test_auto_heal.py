@@ -1,12 +1,25 @@
+from contextlib import contextmanager
+
+import pytest
+
 from holoquiz.auto_heal import (
+    AutoHealWorker,
     auto_heal_threshold_met,
     select_auto_heal_item,
 )
-from holoquiz.config import AutoHealItemConfig
+from holoquiz.config import AutoHealItemConfig, BotConfig
 from holoquiz.player import parse_player_payload
+from holoquiz.runtime import RuntimeControls
 
 
-def player_snapshot(*, health, hunger, hotbar=None, main=None):
+def player_snapshot(
+    *,
+    health,
+    hunger,
+    hotbar=None,
+    main=None,
+    connected=True,
+):
     inventory = []
     for slot, name in (hotbar or {}).items():
         inventory.append(
@@ -38,7 +51,7 @@ def player_snapshot(*, health, hunger, hotbar=None, main=None):
         {
             "api_version": 1,
             "timestamp_ms": 1,
-            "connected": True,
+            "connected": connected,
             "health": {
                 "current": health,
                 "max": 20,
@@ -146,3 +159,249 @@ def test_select_auto_heal_item_skips_rule_without_crossed_threshold():
 
     assert selection is not None
     assert selection.item_name == "Steak"
+
+
+class FakeInput:
+    def __init__(self):
+        self.events = []
+
+    def press(self, key):
+        self.events.append(("press", key))
+
+    def mouseDown(self, *, button):
+        self.events.append(("mouseDown", button))
+
+    def mouseUp(self, *, button):
+        self.events.append(("mouseUp", button))
+
+
+class FakePlayerClient:
+    def __init__(self, snapshot):
+        self.snapshot = snapshot
+        self.url = "http://127.0.0.1:8026/data/player"
+        self.fetch_count = 0
+
+    def fetch(self):
+        self.fetch_count += 1
+        return self.snapshot
+
+
+class FakeContainerClient:
+    def __init__(self, is_open=False):
+        self.open = is_open
+
+    def is_open(self):
+        return self.open
+
+
+class DeniedInputCoordinator:
+    @contextmanager
+    def item_use_session(self):
+        yield False
+
+
+def auto_heal_worker(
+    *,
+    snapshot,
+    rule=None,
+    backend=None,
+    foreground=True,
+    container_open=False,
+    clock=lambda: 100.0,
+    wait_error=None,
+    interrupted=False,
+    input_coordinator=None,
+):
+    configured_rule = rule or AutoHealItemConfig(
+        "Potion",
+        30,
+        2,
+        10,
+        0,
+    )
+    controls = RuntimeControls.from_config(
+        BotConfig(
+            program_enabled=True,
+            auto_heal_enabled=True,
+            auto_heal_items=(configured_rule,),
+        )
+    )
+    input_backend = backend or FakeInput()
+
+    def waiter(seconds):
+        input_backend.events.append(("wait", seconds))
+        if wait_error is not None:
+            raise wait_error
+        return interrupted
+
+    return AutoHealWorker(
+        controls,
+        lambda _message: None,
+        player_client=FakePlayerClient(snapshot),
+        container_client=FakeContainerClient(container_open),
+        pyautogui_module=input_backend,
+        foreground_provider=lambda: foreground,
+        input_coordinator=input_coordinator,
+        clock=clock,
+        waiter=waiter,
+    )
+
+
+def test_worker_uses_selected_hotbar_item_for_configured_duration():
+    backend = FakeInput()
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=5,
+            hunger=20,
+            hotbar={8: "Potion"},
+        ),
+        rule=AutoHealItemConfig("Potion", 30, 2.5, 10, 0),
+        backend=backend,
+        clock=lambda: 100.0,
+    )
+
+    assert worker.check_once() is True
+    assert backend.events == [
+        ("press", "9"),
+        ("mouseDown", "right"),
+        ("wait", 2.5),
+        ("mouseUp", "right"),
+    ]
+    assert worker._last_used_at == {"Potion": 100.0}
+
+
+@pytest.mark.parametrize(
+    "foreground,container_open",
+    [(False, False), (True, True)],
+)
+def test_worker_does_not_inject_when_environment_is_unsafe(
+    foreground,
+    container_open,
+):
+    backend = FakeInput()
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=1,
+            hunger=20,
+            hotbar={8: "Potion"},
+        ),
+        backend=backend,
+        foreground=foreground,
+        container_open=container_open,
+    )
+
+    assert worker.check_once() is False
+    assert backend.events == []
+
+
+def test_worker_releases_right_button_when_wait_raises():
+    backend = FakeInput()
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=1,
+            hunger=20,
+            hotbar={8: "Potion"},
+        ),
+        backend=backend,
+        wait_error=RuntimeError("stopped"),
+    )
+
+    with pytest.raises(RuntimeError, match="stopped"):
+        worker.check_once()
+
+    assert backend.events[-1] == ("mouseUp", "right")
+    assert worker._last_used_at == {}
+
+
+def test_worker_interruption_releases_button_without_starting_cooldown():
+    backend = FakeInput()
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=1,
+            hunger=20,
+            hotbar={8: "Potion"},
+        ),
+        backend=backend,
+        interrupted=True,
+    )
+
+    assert worker.check_once() is False
+    assert backend.events[-1] == ("mouseUp", "right")
+    assert worker._last_used_at == {}
+
+
+def test_worker_disabled_gate_avoids_player_fetch():
+    snapshot = player_snapshot(
+        health=1,
+        hunger=20,
+        hotbar={8: "Potion"},
+    )
+    client = FakePlayerClient(snapshot)
+    worker = AutoHealWorker(
+        RuntimeControls.from_config(BotConfig(auto_heal_enabled=False)),
+        lambda _message: None,
+        player_client=client,
+    )
+
+    assert worker.check_once() is False
+    assert client.fetch_count == 0
+
+
+def test_worker_skips_disconnected_snapshot_and_denied_input_session():
+    disconnected_backend = FakeInput()
+    disconnected = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=1,
+            hunger=20,
+            hotbar={8: "Potion"},
+            connected=False,
+        ),
+        backend=disconnected_backend,
+    )
+    denied_backend = FakeInput()
+    denied = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=1,
+            hunger=20,
+            hotbar={8: "Potion"},
+        ),
+        backend=denied_backend,
+        input_coordinator=DeniedInputCoordinator(),
+    )
+
+    assert disconnected.check_once() is False
+    assert denied.check_once() is False
+    assert disconnected_backend.events == []
+    assert denied_backend.events == []
+
+
+def test_worker_records_cooldown_after_completed_use():
+    times = iter((100.0, 102.5))
+    worker = auto_heal_worker(
+        snapshot=player_snapshot(
+            health=1,
+            hunger=20,
+            hotbar={8: "Potion"},
+        ),
+        clock=lambda: next(times),
+    )
+
+    assert worker.check_once() is True
+    assert worker._last_used_at == {"Potion": 102.5}
+
+
+def test_worker_start_and_stop_are_idempotent():
+    worker = AutoHealWorker(
+        RuntimeControls.from_config(BotConfig(auto_heal_enabled=False)),
+        lambda _message: None,
+        poll_seconds=0.01,
+    )
+
+    worker.start()
+    first_thread = worker._thread
+    worker.start()
+    assert worker._thread is first_thread
+    worker.stop()
+    worker.stop()
+
+    assert worker.is_running() is False

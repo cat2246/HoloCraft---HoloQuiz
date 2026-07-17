@@ -2,9 +2,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from threading import Event, Thread
+from time import monotonic
+from typing import Any, Callable
 
-from holoquiz.config import AutoHealItemConfig
-from holoquiz.player import PlayerSnapshot, build_inventory_layout
+from holoquiz.config import AutoHealItemConfig, BotConfig
+from holoquiz.coordinate_lock import ContainerDataClient, minecraft_is_foreground
+from holoquiz.keyboard_coordinator import (
+    KeyboardInputCoordinator,
+    keyboard_input_coordinator,
+)
+from holoquiz.player import (
+    PlayerOverviewClient,
+    PlayerSnapshot,
+    build_inventory_layout,
+)
+from holoquiz.runtime import RuntimeControls
 
 
 @dataclass(frozen=True)
@@ -50,3 +63,138 @@ def select_auto_heal_item(
             rule=rule,
         )
     return None
+
+
+class AutoHealWorker:
+    def __init__(
+        self,
+        controls: RuntimeControls,
+        status: Callable[[str], None],
+        *,
+        player_client: PlayerOverviewClient | None = None,
+        container_client: ContainerDataClient | None = None,
+        pyautogui_module: Any | None = None,
+        foreground_provider: Callable[[], bool] = minecraft_is_foreground,
+        input_coordinator: KeyboardInputCoordinator | None = None,
+        poll_seconds: float = 0.25,
+        clock: Callable[[], float] = monotonic,
+        waiter: Callable[[float], bool] | None = None,
+    ) -> None:
+        self.controls = controls
+        self._status_sink = status
+        player_url = controls.get_config().player_data_url
+        container_url = f"{player_url.rsplit('/', 1)[0]}/container"
+        self.player_client = player_client or PlayerOverviewClient(player_url)
+        self.container_client = container_client or ContainerDataClient(
+            container_url
+        )
+        self._pyautogui = pyautogui_module
+        self._foreground_provider = foreground_provider
+        self._input_coordinator = input_coordinator or keyboard_input_coordinator
+        self.poll_seconds = poll_seconds
+        self._clock = clock
+        self._stop_event = Event()
+        self._waiter = waiter or self._stop_event.wait
+        self._thread: Thread | None = None
+        self._last_used_at: dict[str, float] = {}
+        self._last_status = ""
+
+    def start(self) -> None:
+        if self.is_running():
+            return
+        self._stop_event.clear()
+        self._thread = Thread(
+            target=self._run,
+            daemon=True,
+            name="auto-heal",
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self.check_once()
+            except Exception as error:
+                self._status(f"[auto-heal-error] {error}")
+            self._stop_event.wait(self.poll_seconds)
+
+    def _client(self, config: BotConfig) -> PlayerOverviewClient:
+        if self.player_client.url != config.player_data_url:
+            self.player_client = PlayerOverviewClient(config.player_data_url)
+        return self.player_client
+
+    def check_once(self) -> bool:
+        config = self.controls.get_config()
+        if not (
+            config.program_enabled
+            and config.auto_heal_enabled
+            and config.auto_heal_items
+        ):
+            return False
+        snapshot = self._client(config).fetch()
+        if not snapshot.connected or not self._environment_is_safe():
+            return False
+        selection = select_auto_heal_item(
+            snapshot,
+            config.auto_heal_items,
+            self._last_used_at,
+            self._clock(),
+        )
+        if selection is None:
+            return False
+        return self._use(selection)
+
+    def _environment_is_safe(self) -> bool:
+        return (
+            self._foreground_provider()
+            and not self.container_client.is_open()
+        )
+
+    def _use(self, selection: AutoHealSelection) -> bool:
+        if not self._environment_is_safe():
+            return False
+        with self._input_coordinator.item_use_session() as allowed:
+            if not allowed:
+                return False
+            pyautogui = self._pyautogui or self._load_pyautogui()
+            pyautogui.press(str(selection.hotbar_slot + 1))
+            right_press_attempted = False
+            interrupted = False
+            try:
+                right_press_attempted = True
+                pyautogui.mouseDown(button="right")
+                interrupted = self._waiter(
+                    selection.rule.use_duration_seconds
+                )
+            finally:
+                if right_press_attempted:
+                    pyautogui.mouseUp(button="right")
+            if interrupted:
+                return False
+            self._last_used_at[selection.item_name] = self._clock()
+            self._last_status = ""
+            self._status_sink(
+                f"[auto-heal] Used {selection.item_name} from hotbar "
+                f"slot {selection.hotbar_slot + 1}."
+            )
+            return True
+
+    def _load_pyautogui(self) -> Any:
+        import pyautogui
+
+        self._pyautogui = pyautogui
+        return pyautogui
+
+    def _status(self, message: str) -> None:
+        if message == self._last_status:
+            return
+        self._last_status = message
+        self._status_sink(message)
