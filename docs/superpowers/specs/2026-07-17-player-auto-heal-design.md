@@ -108,7 +108,9 @@ input-safety control.
 
 ## Player UI
 
-Add an `Auto Heal` section beneath the rendered inventory. It contains:
+Add an `Auto Heal` section beside Vitals and above the rendered inventory so
+the controls and full hotbar remain visible in the standard 1040-by-720 window.
+It contains:
 
 - An `Enable Auto Heal` checkbox.
 - A concise empty-state message when no rules exist.
