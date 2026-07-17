@@ -8,6 +8,8 @@ import holoquiz.player_view as player_view
 from holoquiz.config import AutoHealItemConfig
 from holoquiz.player import InventorySlot, PlayerItem, parse_player_payload
 from holoquiz.player_view import (
+    AUTO_HEAL_LIST_HEIGHT,
+    configure_auto_heal_rule_list,
     format_auto_heal_rule,
     ItemSlotWidget,
     ItemTooltip,
@@ -453,6 +455,55 @@ def test_player_sections_place_auto_heal_beside_vitals_to_fit_window():
             },
         ),
     ]
+
+
+def test_auto_heal_rule_list_keeps_fixed_scrollable_height_for_many_rules():
+    calls = []
+
+    class RecordingScrollbar:
+        def set(self, first, last):
+            calls.append(("scrollbar-set", first, last))
+
+        def grid(self, **options):
+            calls.append(("scrollbar-grid", options))
+
+    class RecordingCanvas:
+        def configure(self, **options):
+            calls.append(("canvas-configure", options))
+
+        def create_window(self, position, **options):
+            calls.append(("canvas-window", position, options))
+            return 17
+
+        def grid(self, **options):
+            calls.append(("canvas-grid", options))
+
+        def bind(self, event, callback):
+            calls.append(("canvas-bind", event, callback))
+
+        def bbox(self, target):
+            calls.append(("canvas-bbox", target))
+            return (0, 0, 320, 900)
+
+        def itemconfigure(self, window_id, **options):
+            calls.append(("canvas-itemconfigure", window_id, options))
+
+    class RecordingRows:
+        def bind(self, event, callback):
+            calls.append(("rows-bind", event, callback))
+
+    canvas = RecordingCanvas()
+    scrollbar = RecordingScrollbar()
+    rows = RecordingRows()
+
+    configure_auto_heal_rule_list(canvas, scrollbar, rows)
+
+    configured = [entry for entry in calls if entry[0] == "canvas-configure"]
+    assert configured[0][1]["height"] == AUTO_HEAL_LIST_HEIGHT
+    assert configured[0][1]["yscrollcommand"] == scrollbar.set
+    assert any(entry[0] == "scrollbar-grid" for entry in calls)
+    assert any(entry[:2] == ("rows-bind", "<Configure>") for entry in calls)
+    assert any(entry[:2] == ("canvas-bind", "<Configure>") for entry in calls)
 
 
 def test_item_slot_fallback_draws_stack_count_overlay_without_tk():

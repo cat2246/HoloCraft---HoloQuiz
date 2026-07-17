@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
 from time import monotonic
 from typing import Any, Callable
 
@@ -112,8 +112,9 @@ class AutoHealWorker:
 
     def stop(self) -> None:
         self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=1.0)
+        thread = self._thread
+        if thread is not None and thread is not current_thread():
+            thread.join()
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -132,6 +133,8 @@ class AutoHealWorker:
         return self.player_client
 
     def check_once(self) -> bool:
+        if self._stop_event.is_set():
+            return False
         config = self.controls.get_config()
         if not (
             config.program_enabled
@@ -140,7 +143,12 @@ class AutoHealWorker:
         ):
             return False
         snapshot = self._client(config).fetch()
-        if not snapshot.connected or not self._environment_is_safe():
+        if (
+            self._stop_event.is_set()
+            or not snapshot.connected
+            or not self._environment_is_safe()
+            or self._stop_event.is_set()
+        ):
             return False
         selection = select_auto_heal_item(
             snapshot,
@@ -159,10 +167,10 @@ class AutoHealWorker:
         )
 
     def _use(self, selection: AutoHealSelection) -> bool:
-        if not self._environment_is_safe():
+        if self._stop_event.is_set() or not self._environment_is_safe():
             return False
         with self._input_coordinator.item_use_session() as allowed:
-            if not allowed:
+            if not allowed or self._stop_event.is_set():
                 return False
             pyautogui = self._pyautogui or self._load_pyautogui()
             pyautogui.press(str(selection.hotbar_slot + 1))

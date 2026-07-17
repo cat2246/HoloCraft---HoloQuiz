@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import threading
 
 import pytest
 
@@ -192,6 +193,18 @@ class FakeContainerClient:
 
     def is_open(self):
         return self.open
+
+
+class BlockingPlayerClient(FakePlayerClient):
+    def __init__(self, snapshot):
+        super().__init__(snapshot)
+        self.fetch_started = threading.Event()
+        self.release_fetch = threading.Event()
+
+    def fetch(self):
+        self.fetch_started.set()
+        self.release_fetch.wait()
+        return super().fetch()
 
 
 class DeniedInputCoordinator:
@@ -405,3 +418,46 @@ def test_worker_start_and_stop_are_idempotent():
     worker.stop()
 
     assert worker.is_running() is False
+
+
+def test_worker_stop_during_fetch_waits_and_never_injects_input():
+    snapshot = player_snapshot(
+        health=1,
+        hunger=20,
+        hotbar={8: "Potion"},
+    )
+    player_client = BlockingPlayerClient(snapshot)
+    backend = FakeInput()
+    worker = AutoHealWorker(
+        RuntimeControls.from_config(
+            BotConfig(
+                program_enabled=True,
+                auto_heal_enabled=True,
+                auto_heal_items=(
+                    AutoHealItemConfig("Potion", 30, 2, 10, 0),
+                ),
+            )
+        ),
+        lambda _message: None,
+        player_client=player_client,
+        container_client=FakeContainerClient(),
+        pyautogui_module=backend,
+        foreground_provider=lambda: True,
+        poll_seconds=0.01,
+    )
+
+    worker.start()
+    assert player_client.fetch_started.wait(timeout=1)
+    stopped = threading.Event()
+    stop_thread = threading.Thread(
+        target=lambda: (worker.stop(), stopped.set())
+    )
+    stop_thread.start()
+
+    assert not stopped.wait(timeout=0.05)
+    player_client.release_fetch.set()
+    stop_thread.join(timeout=1)
+
+    assert stopped.is_set()
+    assert worker.is_running() is False
+    assert backend.events == []

@@ -26,6 +26,7 @@ from holoquiz.player import (
 SLOT_SIZE = 48
 HEALTH_MAX_FALLBACK = 1.0
 HUNGER_MAXIMUM = 20
+AUTO_HEAL_LIST_HEIGHT = 132
 
 
 def configure_player_tab_grid(parent: Any) -> None:
@@ -71,6 +72,43 @@ def layout_player_sections(
         sticky="w",
         pady=(8, 0),
     )
+
+
+def configure_auto_heal_rule_list(
+    canvas: Any,
+    scrollbar: Any,
+    rows_frame: Any,
+) -> int:
+    canvas.configure(
+        height=AUTO_HEAL_LIST_HEIGHT,
+        yscrollcommand=scrollbar.set,
+    )
+    window_id = canvas.create_window(
+        (0, 0),
+        window=rows_frame,
+        anchor="nw",
+    )
+    canvas.grid(
+        row=2,
+        column=0,
+        sticky="ew",
+        pady=(6, 0),
+    )
+    scrollbar.grid(
+        row=2,
+        column=1,
+        sticky="ns",
+        pady=(6, 0),
+    )
+    rows_frame.bind(
+        "<Configure>",
+        lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+    )
+    canvas.bind(
+        "<Configure>",
+        lambda event: canvas.itemconfigure(window_id, width=event.width),
+    )
+    return window_id
 
 
 def health_percent(snapshot: PlayerSnapshot) -> float:
@@ -785,14 +823,23 @@ class PlayerTab:
             sticky="w",
             pady=(6, 0),
         )
-        self.auto_heal_rows_frame = ttk.Frame(section)
-        self.auto_heal_rows_frame.grid(
-            row=2,
-            column=0,
-            sticky="ew",
-            pady=(6, 0),
+        self.auto_heal_list_canvas = tk.Canvas(
+            section,
+            borderwidth=0,
+            highlightthickness=0,
         )
+        self.auto_heal_scrollbar = ttk.Scrollbar(
+            section,
+            orient="vertical",
+            command=self.auto_heal_list_canvas.yview,
+        )
+        self.auto_heal_rows_frame = ttk.Frame(self.auto_heal_list_canvas)
         self.auto_heal_rows_frame.columnconfigure(0, weight=1)
+        configure_auto_heal_rule_list(
+            self.auto_heal_list_canvas,
+            self.auto_heal_scrollbar,
+            self.auto_heal_rows_frame,
+        )
         self._refresh_auto_heal_rows()
 
     def _on_auto_heal_toggle(self) -> None:
@@ -844,8 +891,12 @@ class PlayerTab:
             child.destroy()
         if not self.auto_heal_items:
             self.auto_heal_empty_label.grid()
+            self.auto_heal_list_canvas.grid_remove()
+            self.auto_heal_scrollbar.grid_remove()
             return
         self.auto_heal_empty_label.grid_remove()
+        self.auto_heal_list_canvas.grid()
+        self.auto_heal_scrollbar.grid()
         for row_index, item in enumerate(self.auto_heal_items):
             row = ttk.Frame(self.auto_heal_rows_frame)
             row.grid(row=row_index, column=0, sticky="ew", pady=2)

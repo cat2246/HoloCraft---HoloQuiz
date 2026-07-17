@@ -81,6 +81,18 @@ def test_auto_heal_defaults_are_safe():
     assert config.auto_heal_items == ()
 
 
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_load_config_rejects_non_boolean_auto_heal_enabled(tmp_path, value):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"auto_heal_enabled": value}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="auto_heal_enabled must be a boolean"):
+        load_config(config_path)
+
+
 def test_load_config_preserves_exact_unicode_auto_heal_name(tmp_path):
     config_path = tmp_path / "config.json"
     name = ".｡*ﾟ+.*.｡ ʜᴏʟᴏ ᴀɴɴɪᴠ ᴄᴀᴋᴇ ｡+..｡*ﾟ"

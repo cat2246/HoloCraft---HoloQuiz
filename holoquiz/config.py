@@ -250,6 +250,10 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
                 )
             ),
         )
+    if "auto_heal_enabled" in values and not isinstance(
+        values["auto_heal_enabled"], bool
+    ):
+        raise ValueError("auto_heal_enabled must be a boolean.")
     values["auto_heal_items"] = _auto_heal_items_from_json(
         values.get("auto_heal_items")
     )
