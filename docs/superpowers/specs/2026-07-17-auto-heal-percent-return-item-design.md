@@ -117,9 +117,9 @@ The Auto Heal panel shows the global selection as:
 
 When no item is configured, it shows `Return Item: None`. The Clear button is
 disabled in that state. The selected Return Item has a gold inventory-slot
-outline distinct from the existing Auto Heal marker. If an item has both
-roles, the gold Return Item outline takes visual precedence while the Auto
-Heal listing continues to show its healing rule.
+outline distinct from the existing purple enchanted-item outline. Gold takes
+visual precedence when the Return Item is also enchanted; any Auto Heal rule
+for that item remains visible in the Auto Heal listing.
 
 The Auto Heal item dialog labels become:
 
