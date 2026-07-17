@@ -12,6 +12,7 @@ class KeyboardInputCoordinator:
         self._input_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._pending_chat_sessions = 0
+        self._item_use_active = False
 
     @contextmanager
     def chat_session(self) -> Iterator[None]:
@@ -50,9 +51,36 @@ class KeyboardInputCoordinator:
     def click_session(self) -> Iterator[bool]:
         self._state_lock.acquire()
         try:
-            yield self._pending_chat_sessions == 0
+            yield (
+                self._pending_chat_sessions == 0
+                and not self._item_use_active
+            )
         finally:
             self._state_lock.release()
+
+    @contextmanager
+    def item_use_session(self) -> Iterator[bool]:
+        with self._state_lock:
+            denied = self._pending_chat_sessions > 0
+
+        acquired = False
+        if not denied:
+            acquired = self._input_lock.acquire(blocking=False)
+        if acquired:
+            with self._state_lock:
+                if self._pending_chat_sessions > 0:
+                    self._input_lock.release()
+                    acquired = False
+                else:
+                    self._item_use_active = True
+
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                with self._state_lock:
+                    self._item_use_active = False
+                self._input_lock.release()
 
 
 keyboard_input_coordinator = KeyboardInputCoordinator()
