@@ -85,6 +85,9 @@ class HoloQuizBot:
             self.runtime_controls.get_config().chat_triggers,
         )
 
+        if not self.runtime_controls.is_holoquiz_enabled():
+            return
+
         event = parse_log_line(line)
         if event is None:
             if is_ignored_math_holoquiz_line(line):

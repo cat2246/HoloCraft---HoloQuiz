@@ -210,6 +210,67 @@ def test_bot_skips_quiz_lines_when_program_disabled(tmp_path):
     assert bot.memory.lookup("Who created Minecraft?") is None
 
 
+def test_bot_skips_quiz_questions_when_holoquiz_disabled(tmp_path):
+    controls = RuntimeControls.from_config(BotConfig(holoquiz_enabled=False))
+    sender = FakeSender()
+    answer_service = FakeAnswerService({"Who created Minecraft?": "Notch"})
+    bot = make_bot_with_controls(
+        tmp_path,
+        controls=controls,
+        answer_service=answer_service,
+        sender=sender,
+    )
+
+    bot.handle_line(
+        "[17:40:00] [Render thread/INFO]: [System] [CHAT] "
+        "[HoloQuiz] Who created Minecraft?"
+    )
+
+    assert sender.sent == []
+    assert answer_service.questions == []
+    assert bot.pending_question is None
+    assert controls.get_latest_question() is None
+    assert bot.memory.lookup("Who created Minecraft?") is None
+
+
+def test_bot_skips_answer_reveals_when_holoquiz_disabled(tmp_path):
+    controls = RuntimeControls.from_config(BotConfig())
+    bot = make_bot_with_controls(tmp_path, controls=controls)
+    bot.handle_line(
+        "[17:40:00] [Render thread/INFO]: [System] [CHAT] "
+        "[HoloQuiz] Who created Minecraft?"
+    )
+    controls.set_holoquiz_enabled(False)
+
+    bot.handle_line(
+        "[17:40:09] [Render thread/INFO]: [System] [CHAT] "
+        "[HoloQuiz] No one got the answer! The answer was Notch."
+    )
+
+    assert bot.memory.lookup("Who created Minecraft?") is None
+
+
+def test_chat_triggers_run_when_holoquiz_disabled(tmp_path):
+    config = BotConfig(
+        holoquiz_enabled=False,
+        chat_triggers=(
+            ChatTriggerConfig(
+                id="morning",
+                trigger_phrase="Good Morning!",
+                macro="tGood Morning{{Enter}}",
+                cooldown_seconds=30,
+            ),
+        ),
+    )
+    controls = RuntimeControls.from_config(config)
+    sender = FakeSender()
+    bot = make_bot_with_controls(tmp_path, controls=controls, sender=sender)
+
+    bot.handle_line("[System] [CHAT] Good Morning!")
+
+    assert sender.macros == [("tGood Morning{{Enter}}", None)]
+
+
 def test_bot_skips_answer_lookup_when_find_answer_function_disabled(tmp_path):
     controls = RuntimeControls.from_config(BotConfig())
     controls.set_function_enabled(FIND_ANSWER_FUNCTION, False)
