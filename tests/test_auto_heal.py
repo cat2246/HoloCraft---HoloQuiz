@@ -6,6 +6,7 @@ import pytest
 from holoquiz.auto_heal import (
     AutoHealWorker,
     auto_heal_threshold_met,
+    find_return_hotbar_slot,
     select_auto_heal_item,
 )
 from holoquiz.config import AutoHealItemConfig, BotConfig
@@ -17,6 +18,7 @@ def player_snapshot(
     *,
     health,
     hunger,
+    maximum_health=20,
     hotbar=None,
     main=None,
     connected=True,
@@ -55,7 +57,7 @@ def player_snapshot(
             "connected": connected,
             "health": {
                 "current": health,
-                "max": 20,
+                "max": maximum_health,
                 "absorption": 0,
             },
             "hunger": {"food_level": hunger, "saturation": 0},
@@ -71,8 +73,8 @@ def test_select_auto_heal_item_prioritizes_rightmost_hotbar_match():
         hotbar={7: "Steak", 8: "Potion"},
     )
     rules = (
-        AutoHealItemConfig("Steak", 5, 2, 10, 0),
-        AutoHealItemConfig("Potion", 5, 2, 10, 0),
+        AutoHealItemConfig("Steak", 5, 2, 50, 0),
+        AutoHealItemConfig("Potion", 5, 2, 50, 0),
     )
 
     selection = select_auto_heal_item(snapshot, rules, {}, now=100.0)
@@ -89,8 +91,8 @@ def test_select_auto_heal_item_skips_rightmost_item_on_cooldown():
         hotbar={7: "Steak", 8: "Potion"},
     )
     rules = (
-        AutoHealItemConfig("Steak", 5, 2, 10, 0),
-        AutoHealItemConfig("Potion", 30, 2, 10, 0),
+        AutoHealItemConfig("Steak", 5, 2, 50, 0),
+        AutoHealItemConfig("Potion", 30, 2, 50, 0),
     )
 
     selection = select_auto_heal_item(
@@ -104,23 +106,67 @@ def test_select_auto_heal_item_skips_rightmost_item_on_cooldown():
     assert selection.item_name == "Steak"
 
 
-def test_auto_heal_thresholds_use_strict_or_semantics_and_zero_disables():
-    rule = AutoHealItemConfig(
-        "Steak",
-        0,
-        2,
-        health_percent_below=10,
-        hunger_percent_below=6,
-    )
+def test_health_percentage_is_strict_and_uses_maximum_health():
+    rule = AutoHealItemConfig("Steak", 0, 2, 50, 0)
 
     assert auto_heal_threshold_met(
-        player_snapshot(health=10, hunger=5),
+        player_snapshot(health=9.9, maximum_health=20, hunger=20),
         rule,
     )
     assert not auto_heal_threshold_met(
-        player_snapshot(health=10, hunger=6),
+        player_snapshot(health=10, maximum_health=20, hunger=20),
         rule,
     )
+
+
+def test_hunger_percentage_is_strict_and_clamped():
+    rule = AutoHealItemConfig("Steak", 0, 2, 0, 50)
+
+    assert auto_heal_threshold_met(player_snapshot(health=20, hunger=9), rule)
+    assert not auto_heal_threshold_met(
+        player_snapshot(health=20, hunger=10), rule
+    )
+    assert auto_heal_threshold_met(player_snapshot(health=20, hunger=-5), rule)
+    assert not auto_heal_threshold_met(
+        player_snapshot(health=20, hunger=25), rule
+    )
+
+
+@pytest.mark.parametrize("maximum", [0, -1, float("nan"), float("inf")])
+def test_invalid_maximum_health_disables_only_health_condition(maximum):
+    health_only = AutoHealItemConfig("Potion", 0, 2, 50, 0)
+    hunger_fallback = AutoHealItemConfig("Potion", 0, 2, 50, 50)
+    snapshot = player_snapshot(
+        health=0,
+        maximum_health=maximum,
+        hunger=5,
+    )
+
+    assert not auto_heal_threshold_met(snapshot, health_only)
+    assert auto_heal_threshold_met(snapshot, hunger_fallback)
+
+
+def test_return_item_resolver_uses_rightmost_exact_hotbar_name():
+    snapshot = player_snapshot(
+        health=20,
+        hunger=20,
+        hotbar={0: "Sword", 5: "Sword", 8: "sword"},
+    )
+
+    assert find_return_hotbar_slot(snapshot, "Sword") == 5
+
+
+def test_return_item_resolver_ignores_empty_name_and_main_inventory():
+    snapshot = player_snapshot(
+        health=20,
+        hunger=20,
+        hotbar={0: "Sword"},
+        main={20: "Main Sword"},
+    )
+
+    assert find_return_hotbar_slot(snapshot, "") is None
+    assert find_return_hotbar_slot(snapshot, "Main Sword") is None
+    assert find_return_hotbar_slot(snapshot, "Missing") is None
 
 
 def test_select_auto_heal_item_matches_exact_name_only():
@@ -147,7 +193,7 @@ def test_select_auto_heal_item_ignores_configured_match_outside_hotbar():
 
 def test_select_auto_heal_item_skips_rule_without_crossed_threshold():
     snapshot = player_snapshot(
-        health=20,
+        health=4,
         hunger=20,
         hotbar={7: "Steak", 8: "Potion"},
     )
@@ -229,7 +275,7 @@ def auto_heal_worker(
         "Potion",
         30,
         2,
-        10,
+        50,
         0,
     )
     controls = RuntimeControls.from_config(
@@ -268,7 +314,7 @@ def test_worker_uses_selected_hotbar_item_for_configured_duration():
             hunger=20,
             hotbar={8: "Potion"},
         ),
-        rule=AutoHealItemConfig("Potion", 30, 2.5, 10, 0),
+        rule=AutoHealItemConfig("Potion", 30, 2.5, 50, 0),
         backend=backend,
         clock=lambda: 100.0,
     )

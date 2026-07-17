@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import math
 from threading import Event, Thread, current_thread
 from time import monotonic
 from typing import Any, Callable
@@ -31,13 +32,43 @@ def auto_heal_threshold_met(
     snapshot: PlayerSnapshot,
     rule: AutoHealItemConfig,
 ) -> bool:
-    return (
-        rule.health_below > 0
-        and snapshot.health.current < rule.health_below
-    ) or (
-        rule.hunger_below > 0
-        and snapshot.hunger.food_level < rule.hunger_below
+    health_triggered = False
+    maximum = snapshot.health.maximum
+    current = snapshot.health.current
+    if (
+        rule.health_percent_below > 0
+        and math.isfinite(maximum)
+        and maximum > 0
+        and math.isfinite(current)
+    ):
+        health_percent = min(
+            max(current / maximum * 100.0, 0.0),
+            100.0,
+        )
+        health_triggered = health_percent < rule.health_percent_below
+
+    hunger_percent = min(
+        max(snapshot.hunger.food_level / 20.0 * 100.0, 0.0),
+        100.0,
     )
+    hunger_triggered = (
+        rule.hunger_percent_below > 0
+        and hunger_percent < rule.hunger_percent_below
+    )
+    return health_triggered or hunger_triggered
+
+
+def find_return_hotbar_slot(
+    snapshot: PlayerSnapshot,
+    return_item_name: str,
+) -> int | None:
+    if not return_item_name:
+        return None
+    hotbar = build_inventory_layout(snapshot.inventory).hotbar
+    for slot in reversed(hotbar):
+        if not slot.item.empty and slot.item.name == return_item_name:
+            return slot.inventory_slot
+    return None
 
 
 def select_auto_heal_item(
