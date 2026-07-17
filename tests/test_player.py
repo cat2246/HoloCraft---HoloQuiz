@@ -1,7 +1,14 @@
+import json
+from io import BytesIO
+
 import pytest
+from PIL import Image
 
 from holoquiz.player import (
+    ItemIconClient,
+    PlayerOverviewClient,
     build_inventory_layout,
+    build_item_icon_url,
     format_item_tooltip,
     parse_player_payload,
 )
@@ -122,3 +129,80 @@ def test_parse_player_payload_keeps_recoverable_malformed_item_slot():
     assert snapshot.inventory[0].inventory_slot == 0
     assert snapshot.inventory[0].item.empty is False
     assert snapshot.inventory[0].item.name == "Unreadable item"
+
+
+class FakeResponse:
+    def __init__(self, body, content_type="application/json"):
+        self.body = body if isinstance(body, bytes) else body.encode("utf-8")
+        self.headers = {"Content-Type": content_type}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self):
+        return self.body
+
+
+def png_bytes(color="red"):
+    stream = BytesIO()
+    Image.new("RGBA", (16, 16), color).save(stream, format="PNG")
+    return stream.getvalue()
+
+
+def test_player_overview_client_uses_configured_url_and_timeout():
+    requests = []
+
+    def opener(url, *, timeout):
+        requests.append((url, timeout))
+        return FakeResponse(json.dumps(player_payload()))
+
+    snapshot = PlayerOverviewClient(
+        "http://127.0.0.1:8026/data/player",
+        timeout_seconds=0.75,
+        opener=opener,
+    ).fetch()
+
+    assert snapshot.armor == 12
+    assert requests == [("http://127.0.0.1:8026/data/player", 0.75)]
+
+
+def test_build_item_icon_url_preserves_namespaced_item_id():
+    assert build_item_icon_url("minecraft:iron_sword") == (
+        "https://blocksitems.com/api/v1/items/minecraft:iron_sword/icon?size=64"
+    )
+
+
+def test_item_icon_client_downloads_each_item_once():
+    requests = []
+
+    def opener(url, *, timeout):
+        requests.append((url, timeout))
+        return FakeResponse(png_bytes(), "image/png")
+
+    client = ItemIconClient(opener=opener)
+
+    assert client.get_icon("minecraft:diamond") == png_bytes()
+    assert client.get_icon("minecraft:diamond") == png_bytes()
+    assert len(requests) == 1
+
+
+def test_item_icon_client_returns_cached_fallback_for_invalid_image():
+    requests = []
+
+    def opener(url, *, timeout):
+        requests.append(url)
+        return FakeResponse(b"not-an-image", "text/plain")
+
+    client = ItemIconClient(opener=opener)
+    first = client.get_icon("minecraft:missing")
+    second = client.get_icon("minecraft:missing")
+
+    with Image.open(BytesIO(first)) as image:
+        assert image.size == (64, 64)
+    assert second == first
+    assert requests == [
+        "https://blocksitems.com/api/v1/items/minecraft:missing/icon?size=64"
+    ]

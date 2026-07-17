@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from io import BytesIO
+import json
+from threading import Lock
+from typing import Any, Callable
+from urllib.parse import quote
+from urllib.request import urlopen
+
+from PIL import Image, ImageDraw, UnidentifiedImageError
+
+
+ITEM_ICON_BASE_URL = "https://blocksitems.com/api/v1/items"
+MINECRAFT_TARGET_VERSION = "1.21.10"
 
 
 @dataclass(frozen=True)
@@ -169,6 +180,84 @@ def parse_player_payload(payload: object) -> PlayerSnapshot:
         facing_direction=str(payload.get("facing_direction", "Unknown")),
         inventory=tuple(inventory),
     )
+
+
+class PlayerOverviewClient:
+    def __init__(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float = 0.75,
+        opener: Callable[..., Any] = urlopen,
+    ) -> None:
+        self.url = url
+        self.timeout_seconds = timeout_seconds
+        self._opener = opener
+
+    def fetch(self) -> PlayerSnapshot:
+        with self._opener(self.url, timeout=self.timeout_seconds) as response:
+            try:
+                payload = json.loads(response.read().decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise ValueError("Player endpoint returned invalid JSON.") from error
+        return parse_player_payload(payload)
+
+
+def build_item_icon_url(item_id: str, size: int = 64) -> str:
+    if size <= 0:
+        raise ValueError("Item icon size must be positive.")
+    encoded_id = quote(item_id.strip(), safe=":")
+    return f"{ITEM_ICON_BASE_URL}/{encoded_id}/icon?size={size}"
+
+
+def _fallback_icon(size: int) -> bytes:
+    stream = BytesIO()
+    image = Image.new("RGBA", (size, size), "#2b2f36")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((1, 1, size - 2, size - 2), outline="#68707c", width=2)
+    draw.line((size * 0.3, size * 0.3, size * 0.7, size * 0.7), fill="#98a2b3", width=3)
+    draw.line((size * 0.7, size * 0.3, size * 0.3, size * 0.7), fill="#98a2b3", width=3)
+    image.save(stream, format="PNG")
+    return stream.getvalue()
+
+
+class ItemIconClient:
+    def __init__(
+        self,
+        *,
+        size: int = 64,
+        timeout_seconds: float = 1.0,
+        opener: Callable[..., Any] = urlopen,
+    ) -> None:
+        self.size = size
+        self.timeout_seconds = timeout_seconds
+        self._opener = opener
+        self._cache: dict[str, bytes] = {}
+        self._lock = Lock()
+        self._fallback = _fallback_icon(size)
+
+    @property
+    def fallback_icon(self) -> bytes:
+        return self._fallback
+
+    def get_icon(self, item_id: str) -> bytes:
+        with self._lock:
+            cached = self._cache.get(item_id)
+        if cached is not None:
+            return cached
+        try:
+            url = build_item_icon_url(item_id, self.size)
+            with self._opener(url, timeout=self.timeout_seconds) as response:
+                content_type = str(response.headers.get("Content-Type", ""))
+                if not content_type.casefold().startswith("image/"):
+                    raise ValueError("Item icon endpoint did not return an image.")
+                icon = response.read()
+            with Image.open(BytesIO(icon)) as image:
+                image.verify()
+        except (OSError, ValueError, UnidentifiedImageError):
+            icon = self._fallback
+        with self._lock:
+            return self._cache.setdefault(item_id, icon)
 
 
 def _empty_slot(index: int, section: str) -> InventorySlot:
