@@ -16,8 +16,10 @@ from urllib.parse import quote_plus
 from uuid import uuid4
 import webbrowser
 
+from holoquiz.auto_heal import AutoHealWorker
 from holoquiz.chat_sender import ChatSender
 from holoquiz.config import (
+    AutoHealItemConfig,
     BotConfig,
     ChatTriggerConfig,
     COORDINATE_LOCK_LOOK_LOCK,
@@ -27,6 +29,7 @@ from holoquiz.config import (
     ScreenPhraseRegionConfig,
     load_config,
     save_answer_sound_setting,
+    save_auto_heal_settings,
     save_chat_triggers_settings,
     save_coordinate_lock_settings,
     save_holoquiz_enabled_setting,
@@ -37,6 +40,7 @@ from holoquiz.coordinate_lock import CoordinateLockWorker, PlayerDataClient
 from holoquiz.log_tailer import LogTailer
 from holoquiz.minecraft_text_ocr import read_minecraft_text
 from holoquiz.mouse_hotkey import Mouse4HotkeyListener
+from holoquiz.player import PlayerOverviewClient
 from holoquiz.player_view import PlayerTab
 from holoquiz.runner import build_bot, drain_answer_reveals
 from holoquiz.runtime import (
@@ -820,6 +824,11 @@ class HoloQuizControlPanel:
             self.log_queue,
             player_client=PlayerDataClient(config.player_data_url),
         )
+        self.auto_heal_worker = AutoHealWorker(
+            self.controls,
+            self.log_queue.put,
+            player_client=PlayerOverviewClient(config.player_data_url),
+        )
         self.mouse4_hotkey_listener = Mouse4HotkeyListener(
             self._queue_mouse4_coordinate_lock_toggle
         )
@@ -829,6 +838,7 @@ class HoloQuizControlPanel:
         self.worker.start()
         self.screen_phrase_worker.start()
         self.coordinate_lock_worker.start()
+        self.auto_heal_worker.start()
         self.mouse4_hotkey_listener.start()
         self._refresh_status()
         self._drain_logs()
@@ -1482,6 +1492,14 @@ class HoloQuizControlPanel:
         self.player_view = PlayerTab(
             player_tab,
             player_url=self.controls.get_config().player_data_url,
+            auto_heal_enabled=config.auto_heal_enabled,
+            auto_heal_items=config.auto_heal_items,
+            on_auto_heal_enabled_changed=(
+                self._on_auto_heal_enabled_changed
+            ),
+            on_auto_heal_items_changed=(
+                self._on_auto_heal_items_changed
+            ),
         )
         self.notebook.bind("<<NotebookTabChanged>>", self._on_feature_tab_changed)
 
@@ -1529,6 +1547,25 @@ class HoloQuizControlPanel:
             self.player_view.activate()
         else:
             self.player_view.deactivate()
+
+    def _save_auto_heal_settings(self) -> None:
+        config = self.controls.get_config()
+        save_auto_heal_settings(
+            self.config_path,
+            enabled=config.auto_heal_enabled,
+            items=config.auto_heal_items,
+        )
+
+    def _on_auto_heal_enabled_changed(self, enabled: bool) -> None:
+        self.controls.set_auto_heal_enabled(enabled)
+        self._save_auto_heal_settings()
+
+    def _on_auto_heal_items_changed(
+        self,
+        items: tuple[AutoHealItemConfig, ...],
+    ) -> None:
+        self.controls.set_auto_heal_items(items)
+        self._save_auto_heal_settings()
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -2289,6 +2326,7 @@ class HoloQuizControlPanel:
         self.log_text.configure(state="disabled")
 
     def close(self) -> None:
+        self.auto_heal_worker.stop()
         self.player_view.close()
         self.mouse4_hotkey_listener.stop()
         self.worker.stop()

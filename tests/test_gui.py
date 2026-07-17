@@ -3,7 +3,12 @@ import queue
 from types import SimpleNamespace
 
 import holoquiz.gui as gui
-from holoquiz.config import BotConfig, ChatTriggerConfig, CoordinateLockConfig
+from holoquiz.config import (
+    AutoHealItemConfig,
+    BotConfig,
+    ChatTriggerConfig,
+    CoordinateLockConfig,
+)
 from holoquiz.gui import (
     BROWSER_SEARCH_STATUS_MAX_CHARS,
     ControlPanelController,
@@ -292,6 +297,9 @@ def test_player_view_runs_only_when_player_tab_is_selected():
 def test_control_panel_close_closes_player_view():
     calls = []
     panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.auto_heal_worker = SimpleNamespace(
+        stop=lambda: calls.append("auto-heal")
+    )
     panel.player_view = SimpleNamespace(close=lambda: calls.append("player"))
     panel.mouse4_hotkey_listener = SimpleNamespace(stop=lambda: calls.append("mouse"))
     panel.worker = SimpleNamespace(stop=lambda: calls.append("worker"))
@@ -306,7 +314,47 @@ def test_control_panel_close_closes_player_view():
 
     panel.close()
 
-    assert calls[:5] == ["player", "mouse", "worker", "screen", "coordinate"]
+    assert calls[:6] == [
+        "auto-heal",
+        "player",
+        "mouse",
+        "worker",
+        "screen",
+        "coordinate",
+    ]
+
+
+def test_auto_heal_toggle_updates_runtime_and_persists(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}\n", encoding="utf-8")
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.config_path = config_path
+    panel.controls = RuntimeControls.from_config(BotConfig())
+
+    panel._on_auto_heal_enabled_changed(True)
+
+    assert panel.controls.get_config().auto_heal_enabled is True
+    assert json.loads(config_path.read_text(encoding="utf-8"))[
+        "auto_heal_enabled"
+    ] is True
+
+
+def test_auto_heal_items_update_runtime_and_persist(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}\n", encoding="utf-8")
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.config_path = config_path
+    panel.controls = RuntimeControls.from_config(
+        BotConfig(auto_heal_enabled=True)
+    )
+    item = AutoHealItemConfig("Steak", 5, 2, 10, 6)
+
+    panel._on_auto_heal_items_changed((item,))
+
+    assert panel.controls.get_auto_heal_items() == (item,)
+    persisted = json.loads(config_path.read_text(encoding="utf-8"))
+    assert persisted["auto_heal_enabled"] is True
+    assert persisted["auto_heal_items"][0]["name"] == "Steak"
 
 
 def test_chat_trigger_form_requires_macro_or_sound():
