@@ -29,7 +29,9 @@ from holoquiz.config import (
     save_answer_sound_setting,
     save_chat_triggers_settings,
     save_coordinate_lock_settings,
+    save_holoquiz_enabled_setting,
     save_screen_phrase_settings,
+    save_send_delay_settings,
 )
 from holoquiz.coordinate_lock import CoordinateLockWorker, PlayerDataClient
 from holoquiz.log_tailer import LogTailer
@@ -113,6 +115,9 @@ class ControlPanelController:
 
     def set_program_enabled(self, enabled: bool) -> None:
         self.controls.set_program_enabled(enabled)
+
+    def set_holoquiz_enabled(self, enabled: bool) -> None:
+        self.controls.set_holoquiz_enabled(enabled)
 
     def set_dry_run(self, enabled: bool) -> None:
         self.controls.set_dry_run(enabled)
@@ -731,6 +736,7 @@ class HoloQuizControlPanel:
 
         snapshot = self.controls.snapshot()
         self.program_var = tk.BooleanVar(value=snapshot.program_enabled)
+        self.holoquiz_enabled_var = tk.BooleanVar(value=snapshot.holoquiz_enabled)
         self.dry_run_var = tk.BooleanVar(value=snapshot.dry_run)
         self.answer_sound_muted_var = tk.BooleanVar(
             value=not snapshot.answer_sound_enabled
@@ -899,8 +905,15 @@ class HoloQuizControlPanel:
             wraplength=720,
         ).grid(row=0, column=0, columnspan=3, sticky="w")
 
+        ttk.Checkbutton(
+            holoquiz_frame,
+            text="HoloQuiz enabled",
+            variable=self.holoquiz_enabled_var,
+            command=self._on_holoquiz_toggle,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
         delay_row = ttk.Frame(holoquiz_frame)
-        delay_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        delay_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         delay_row.columnconfigure(4, weight=1)
         ttk.Label(delay_row, text="Send delay seconds").grid(
             row=0,
@@ -929,7 +942,7 @@ class HoloQuizControlPanel:
         function_definitions = {
             function.key: function for function in self.controls.registry.all()
         }
-        holoquiz_function_row = 2
+        holoquiz_function_row = 3
         for function in self.controls.registry.all():
             if function.key == SCREEN_PHRASE_WATCHER_FUNCTION:
                 continue
@@ -1589,6 +1602,11 @@ class HoloQuizControlPanel:
         self.controller.set_program_enabled(self.program_var.get())
         self._update_status_text()
 
+    def _on_holoquiz_toggle(self) -> None:
+        enabled = self.holoquiz_enabled_var.get()
+        self.controller.set_holoquiz_enabled(enabled)
+        save_holoquiz_enabled_setting(self.config_path, enabled=enabled)
+
     def _on_dry_run_toggle(self) -> None:
         self.controller.set_dry_run(self.dry_run_var.get())
 
@@ -1610,6 +1628,11 @@ class HoloQuizControlPanel:
             snapshot = self.controls.snapshot()
             self.delay_min_var.set(f"{snapshot.send_delay_min_seconds:g}")
             self.delay_max_var.set(f"{snapshot.send_delay_max_seconds:g}")
+            save_send_delay_settings(
+                self.config_path,
+                min_seconds=snapshot.send_delay_min_seconds,
+                max_seconds=snapshot.send_delay_max_seconds,
+            )
 
     def _on_browser_search(self) -> None:
         result = self.controller.open_browser_search()

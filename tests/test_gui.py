@@ -99,6 +99,7 @@ def test_control_panel_controller_updates_runtime_controls():
     controller = ControlPanelController(controls)
 
     controller.set_program_enabled(False)
+    controller.set_holoquiz_enabled(False)
     controller.set_dry_run(False)
     controller.set_answer_sound_enabled(False)
     controller.set_function_enabled(FIND_ANSWER_FUNCTION, False)
@@ -106,6 +107,7 @@ def test_control_panel_controller_updates_runtime_controls():
 
     assert result.ok is True
     assert controls.snapshot().program_enabled is False
+    assert controls.get_config().holoquiz_enabled is False
     assert controls.get_config().dry_run is False
     assert controls.get_config().answer_sound_enabled is False
     assert controls.is_function_enabled(FIND_ANSWER_FUNCTION) is False
@@ -132,6 +134,25 @@ def test_answer_sound_mute_toggle_updates_runtime_and_persists(tmp_path):
     assert json.loads(config_path.read_text(encoding="utf-8"))[
         "answer_sound_enabled"
     ] is False
+
+
+def test_holoquiz_toggle_updates_runtime_and_persists(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"dry_run": True}), encoding="utf-8")
+    controls = RuntimeControls.from_config(BotConfig(holoquiz_enabled=True))
+    panel = object.__new__(HoloQuizControlPanel)
+    panel.config_path = config_path
+    panel.controls = controls
+    panel.controller = ControlPanelController(controls)
+    panel.holoquiz_enabled_var = RecordingVar(False)
+
+    panel._on_holoquiz_toggle()
+
+    assert controls.is_holoquiz_enabled() is False
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "dry_run": True,
+        "holoquiz_enabled": False,
+    }
 
 
 def test_control_panel_controller_rejects_invalid_send_delay():
@@ -165,6 +186,47 @@ def test_control_panel_controller_rejects_reversed_send_delay_range():
     assert result.ok is False
     assert "less than or equal" in result.message
     assert controls.get_config().send_delay_seconds == 0.8
+
+
+def test_apply_delay_persists_successful_range(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"dry_run": True}), encoding="utf-8")
+    controls = RuntimeControls.from_config(BotConfig())
+    panel = object.__new__(HoloQuizControlPanel)
+    panel.config_path = config_path
+    panel.controls = controls
+    panel.controller = ControlPanelController(controls)
+    panel.delay_min_var = RecordingVar("1")
+    panel.delay_max_var = RecordingVar("3")
+    panel.delay_status_var = RecordingVar()
+
+    panel._on_apply_delay()
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "dry_run": True,
+        "send_delay_seconds": 1.0,
+        "send_delay_min_seconds": 1.0,
+        "send_delay_max_seconds": 3.0,
+    }
+
+
+def test_apply_delay_does_not_persist_invalid_range(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"dry_run": True}), encoding="utf-8")
+    controls = RuntimeControls.from_config(BotConfig())
+    panel = object.__new__(HoloQuizControlPanel)
+    panel.config_path = config_path
+    panel.controls = controls
+    panel.controller = ControlPanelController(controls)
+    panel.delay_min_var = RecordingVar("3")
+    panel.delay_max_var = RecordingVar("1")
+    panel.delay_status_var = RecordingVar()
+
+    panel._on_apply_delay()
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "dry_run": True,
+    }
 
 
 def test_control_panel_controller_updates_auto_hit_range():
