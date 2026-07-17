@@ -109,8 +109,8 @@ def test_auto_heal_thresholds_use_strict_or_semantics_and_zero_disables():
         "Steak",
         0,
         2,
-        health_below=10,
-        hunger_below=6,
+        health_percent_below=10,
+        hunger_percent_below=6,
     )
 
     assert auto_heal_threshold_met(

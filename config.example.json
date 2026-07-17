@@ -59,5 +59,14 @@
   "coordinate_lock_tolerance": 0.75,
   "player_data_url": "http://127.0.0.1:8026/data/player",
   "auto_heal_enabled": false,
-  "auto_heal_items": []
+  "auto_heal_items": [
+    {
+      "name": "Steak",
+      "cooldown_seconds": 5.0,
+      "use_duration_seconds": 2.0,
+      "health_percent_below": 50,
+      "hunger_percent_below": 50
+    }
+  ],
+  "auto_heal_return_item_name": ""
 }

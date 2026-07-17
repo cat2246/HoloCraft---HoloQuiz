@@ -66,8 +66,8 @@ class AutoHealItemConfig:
     name: str
     cooldown_seconds: float
     use_duration_seconds: float = 2.0
-    health_below: float = 0.0
-    hunger_below: int = 0
+    health_percent_below: int = 0
+    hunger_percent_below: int = 0
 
 
 @dataclass(frozen=True)
@@ -113,6 +113,7 @@ class BotConfig:
     player_data_url: str = DEFAULT_PLAYER_DATA_URL
     auto_heal_enabled: bool = False
     auto_heal_items: tuple[AutoHealItemConfig, ...] = ()
+    auto_heal_return_item_name: str = ""
 
 
 def validate_auto_heal_item(item: AutoHealItemConfig) -> AutoHealItemConfig:
@@ -125,11 +126,23 @@ def validate_auto_heal_item(item: AutoHealItemConfig) -> AutoHealItemConfig:
         or item.use_duration_seconds <= 0
     ):
         raise ValueError("Auto Heal use duration must be greater than 0.")
-    if not math.isfinite(item.health_below) or item.health_below < 0:
-        raise ValueError("Auto Heal health threshold must be 0 or greater.")
-    if not 0 <= item.hunger_below <= 20:
-        raise ValueError("Auto Heal hunger threshold must be between 0 and 20.")
-    if item.health_below == 0 and item.hunger_below == 0:
+    for value, label in (
+        (item.health_percent_below, "health"),
+        (item.hunger_percent_below, "hunger"),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= 100
+        ):
+            raise ValueError(
+                f"Auto Heal {label} percentage must be an integer "
+                "between 0 and 100."
+            )
+    if (
+        item.health_percent_below == 0
+        and item.hunger_percent_below == 0
+    ):
         raise ValueError("Enable at least one Auto Heal threshold.")
     return item
 
@@ -254,6 +267,10 @@ def load_config(path: Path = Path("config.json")) -> BotConfig:
         values["auto_heal_enabled"], bool
     ):
         raise ValueError("auto_heal_enabled must be a boolean.")
+    return_item_name = values.get("auto_heal_return_item_name", "")
+    if not isinstance(return_item_name, str):
+        raise ValueError("Auto Heal return item name must be a string.")
+    values["auto_heal_return_item_name"] = return_item_name
     values["auto_heal_items"] = _auto_heal_items_from_json(
         values.get("auto_heal_items")
     )
@@ -396,13 +413,17 @@ def save_auto_heal_settings(
     *,
     enabled: bool,
     items: Sequence[AutoHealItemConfig],
+    return_item_name: str,
 ) -> None:
+    if not isinstance(return_item_name, str):
+        raise ValueError("Auto Heal return item name must be a string.")
     raw_config = _read_existing_config_object(path)
     raw_config["auto_heal_enabled"] = bool(enabled)
     raw_config["auto_heal_items"] = [
         _auto_heal_item_to_json(item)
         for item in validate_auto_heal_items(items)
     ]
+    raw_config["auto_heal_return_item_name"] = return_item_name
     path.write_text(
         json.dumps(raw_config, indent=2) + "\n",
         encoding="utf-8",
@@ -518,6 +539,34 @@ def _coordinate_lock_to_json(lock: CoordinateLockConfig) -> dict[str, Any]:
     }
 
 
+def _auto_heal_percent_from_json(
+    raw: dict[str, Any],
+    *,
+    new_key: str,
+    legacy_key: str,
+    label: str,
+) -> int:
+    key = new_key if new_key in raw else legacy_key
+    value = raw.get(key, 0)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or not float(value).is_integer()
+    ):
+        raise ValueError(
+            f"Auto Heal {label} percentage must be an integer "
+            "between 0 and 100."
+        )
+    percent = int(value)
+    if not 0 <= percent <= 100:
+        raise ValueError(
+            f"Auto Heal {label} percentage must be an integer "
+            "between 0 and 100."
+        )
+    return percent
+
+
 def _auto_heal_items_from_json(
     value: Any,
 ) -> tuple[AutoHealItemConfig, ...]:
@@ -536,8 +585,18 @@ def _auto_heal_items_from_json(
                 use_duration_seconds=float(
                     raw.get("use_duration_seconds", 2.0)
                 ),
-                health_below=float(raw.get("health_below", 0.0)),
-                hunger_below=int(raw.get("hunger_below", 0)),
+                health_percent_below=_auto_heal_percent_from_json(
+                    raw,
+                    new_key="health_percent_below",
+                    legacy_key="health_below",
+                    label="health",
+                ),
+                hunger_percent_below=_auto_heal_percent_from_json(
+                    raw,
+                    new_key="hunger_percent_below",
+                    legacy_key="hunger_below",
+                    label="hunger",
+                ),
             )
         )
     return validate_auto_heal_items(items)
@@ -548,8 +607,8 @@ def _auto_heal_item_to_json(item: AutoHealItemConfig) -> dict[str, Any]:
         "name": item.name,
         "cooldown_seconds": item.cooldown_seconds,
         "use_duration_seconds": item.use_duration_seconds,
-        "health_below": item.health_below,
-        "hunger_below": item.hunger_below,
+        "health_percent_below": item.health_percent_below,
+        "hunger_percent_below": item.hunger_percent_below,
     }
 
 

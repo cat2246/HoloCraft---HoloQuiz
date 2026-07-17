@@ -71,6 +71,7 @@ def test_load_config_creates_default_when_missing(tmp_path):
         "player_data_url": "http://127.0.0.1:8026/data/player",
         "auto_heal_enabled": False,
         "auto_heal_items": [],
+        "auto_heal_return_item_name": "",
     }
 
 
@@ -114,43 +115,168 @@ def test_load_config_preserves_exact_unicode_auto_heal_name(tmp_path):
         encoding="utf-8",
     )
 
+    before = config_path.read_text(encoding="utf-8")
     config = load_config(config_path)
 
     assert config.auto_heal_enabled is True
     assert config.auto_heal_items == (
-        AutoHealItemConfig(name, 30.0, 2.5, 20.0, 8),
+        AutoHealItemConfig(name, 30.0, 2.5, 20, 8),
+    )
+    assert config_path.read_text(encoding="utf-8") == before
+
+
+def test_load_auto_heal_prefers_new_percentage_keys(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "auto_heal_items": [
+                    {
+                        "name": "Steak",
+                        "cooldown_seconds": 5,
+                        "health_percent_below": 45,
+                        "hunger_percent_below": 30,
+                        "health_below": 10,
+                        "hunger_below": 5,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    item = load_config(config_path).auto_heal_items[0]
+
+    assert item.health_percent_below == 45
+    assert item.hunger_percent_below == 30
+
+
+def test_load_auto_heal_accepts_integral_legacy_numbers(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "auto_heal_items": [
+                    {
+                        "name": "Steak",
+                        "cooldown_seconds": 5,
+                        "health_below": 10.0,
+                        "hunger_below": 25.0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_config(config_path).auto_heal_items[0] == AutoHealItemConfig(
+        "Steak", 5.0, 2.0, 10, 25
     )
 
 
 def test_save_auto_heal_settings_preserves_unrelated_values(tmp_path):
     config_path = tmp_path / "config.json"
     config_path.write_text('{"dry_run": false}\n', encoding="utf-8")
-    item = AutoHealItemConfig("Steak", 5.0, 2.0, 10.0, 6)
+    item = AutoHealItemConfig("Steak", 5.0, 2.0, 50, 30)
 
-    save_auto_heal_settings(config_path, enabled=True, items=(item,))
+    save_auto_heal_settings(
+        config_path,
+        enabled=True,
+        items=(item,),
+        return_item_name=".｡*ﾟ+.*.｡ Sword ｡+..｡*ﾟ",
+    )
 
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     assert raw["dry_run"] is False
     assert raw["auto_heal_enabled"] is True
+    assert raw["auto_heal_return_item_name"] == ".｡*ﾟ+.*.｡ Sword ｡+..｡*ﾟ"
     assert raw["auto_heal_items"] == [
         {
             "name": "Steak",
             "cooldown_seconds": 5.0,
             "use_duration_seconds": 2.0,
-            "health_below": 10.0,
-            "hunger_below": 6,
+            "health_percent_below": 50,
+            "hunger_percent_below": 30,
         }
     ]
+
+
+def test_load_config_defaults_missing_return_item_to_empty_string(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}\n", encoding="utf-8")
+
+    assert load_config(config_path).auto_heal_return_item_name == ""
+
+
+def test_load_config_preserves_return_item_name_exactly(tmp_path):
+    name = "  .｡*ﾟ+.*.｡ Sword ｡+..｡*ﾟ  "
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"auto_heal_return_item_name": name}),
+        encoding="utf-8",
+    )
+
+    assert load_config(config_path).auto_heal_return_item_name == name
+
+
+def test_load_config_rejects_non_string_return_item_name(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"auto_heal_return_item_name": 7}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="return item name"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("health_percent_below", 10.5, "health percentage"),
+        ("health_below", 10.5, "health percentage"),
+        ("hunger_percent_below", -1, "hunger percentage"),
+        ("hunger_below", 101, "hunger percentage"),
+    ],
+)
+def test_load_auto_heal_rejects_invalid_percentage_values(
+    tmp_path,
+    field,
+    value,
+    message,
+):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "auto_heal_items": [
+                    {
+                        "name": "Steak",
+                        "cooldown_seconds": 5,
+                        field: value,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        load_config(config_path)
 
 
 @pytest.mark.parametrize(
     "item",
     [
-        AutoHealItemConfig("", 1.0, 2.0, 5.0, 0),
-        AutoHealItemConfig("Steak", -1.0, 2.0, 5.0, 0),
-        AutoHealItemConfig("Steak", 1.0, 0.0, 5.0, 0),
-        AutoHealItemConfig("Steak", 1.0, 2.0, 0.0, 0),
-        AutoHealItemConfig("Steak", 1.0, 2.0, 5.0, 21),
+        AutoHealItemConfig("", 1.0, 2.0, 5, 0),
+        AutoHealItemConfig("Steak", -1.0, 2.0, 5, 0),
+        AutoHealItemConfig("Steak", 1.0, 0.0, 5, 0),
+        AutoHealItemConfig("Steak", 1.0, 2.0, 0, 0),
+        AutoHealItemConfig("Steak", 1.0, 2.0, 10.5, 0),
+        AutoHealItemConfig("Steak", 1.0, 2.0, -1, 0),
+        AutoHealItemConfig("Steak", 1.0, 2.0, 101, 0),
+        AutoHealItemConfig("Steak", 1.0, 2.0, True, 0),
+        AutoHealItemConfig("Steak", 1.0, 2.0, 5, 101),
     ],
 )
 def test_validate_auto_heal_items_rejects_invalid_rules(item):
@@ -159,7 +285,7 @@ def test_validate_auto_heal_items_rejects_invalid_rules(item):
 
 
 def test_validate_auto_heal_items_rejects_duplicate_exact_names():
-    item = AutoHealItemConfig("Steak", 1.0, 2.0, 5.0, 0)
+    item = AutoHealItemConfig("Steak", 1.0, 2.0, 5, 0)
 
     with pytest.raises(ValueError, match="unique"):
         validate_auto_heal_items((item, item))

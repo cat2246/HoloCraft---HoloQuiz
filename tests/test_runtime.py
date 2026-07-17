@@ -206,7 +206,7 @@ def test_runtime_controls_reject_unknown_function_key():
 
 
 def test_runtime_controls_track_auto_heal_settings():
-    item = AutoHealItemConfig("Steak", 5.0, 2.0, 10.0, 6)
+    item = AutoHealItemConfig("Steak", 5.0, 2.0, 10, 6)
     controls = RuntimeControls.from_config(BotConfig())
 
     controls.set_auto_heal_enabled(True)
