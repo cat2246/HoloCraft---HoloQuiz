@@ -3,8 +3,10 @@ import threading
 
 import pytest
 
+import holoquiz.player_view as player_view
 from holoquiz.player import parse_player_payload
 from holoquiz.player_view import (
+    ItemTooltip,
     PlayerPoller,
     PlayerTab,
     health_percent,
@@ -245,6 +247,85 @@ def test_player_poller_fetches_on_worker_but_schedules_and_delivers_on_main_thre
     assert callback_thread_ids == [main_thread_id]
 
 
+def test_player_snapshot_is_delivered_while_first_icon_lookup_is_blocked():
+    scheduler = FakeScheduler()
+    icon_executor = RecordingThreadExecutor()
+    icon_started = threading.Event()
+    release_icon = threading.Event()
+    delivered_icons = []
+
+    def blocked_icon_fetch(item_id):
+        icon_started.set()
+        assert release_icon.wait(timeout=1)
+        return item_id
+
+    icon_loader = player_view.PlayerIconLoader(
+        scheduler,
+        blocked_icon_fetch,
+        lambda item_id, icon: delivered_icons.append((item_id, icon)),
+        executor=icon_executor,
+    )
+    poll_executor = ManualExecutor()
+    snapshots = []
+    poller = PlayerPoller(
+        scheduler,
+        lambda: "snapshot",
+        snapshots.append,
+        lambda _error: None,
+        executor=poll_executor,
+    )
+
+    icon_loader.activate()
+    icon_loader.queue(["minecraft:diamond"])
+    assert icon_started.wait(timeout=1)
+    poller.activate()
+    poll_executor.run_next()
+    while not snapshots:
+        scheduler.run_delay(25)
+
+    assert snapshots == ["snapshot"]
+    assert delivered_icons == []
+
+    poller.close()
+    icon_loader.close()
+    release_icon.set()
+    icon_executor.futures[0].result(timeout=1)
+
+
+def test_player_icon_loader_close_during_blocked_request_skips_remaining_ids():
+    scheduler = FakeScheduler()
+    executor = RecordingThreadExecutor()
+    requests = []
+    first_started = threading.Event()
+    release_first = threading.Event()
+    callbacks = []
+
+    def fetch(item_id):
+        requests.append(item_id)
+        if item_id == "first":
+            first_started.set()
+            assert release_first.wait(timeout=1)
+        return f"icon:{item_id}"
+
+    loader = player_view.PlayerIconLoader(
+        scheduler,
+        fetch,
+        lambda item_id, icon: callbacks.append((item_id, icon)),
+        executor=executor,
+    )
+    loader.activate()
+    loader.queue(["first", "second"])
+    assert first_started.wait(timeout=1)
+
+    loader.close()
+    release_first.set()
+    executor.futures[0].result(timeout=1)
+
+    assert requests == ["first"]
+    assert callbacks == []
+    assert scheduler.callbacks == {}
+
+
 def test_player_progress_values_are_clamped():
     payload = {
         "api_version": 1,
@@ -266,7 +347,7 @@ def test_player_tab_public_lifecycle_is_explicit():
     assert callable(PlayerTab.close)
 
 
-def test_player_tab_deactivate_hides_tooltip_before_stopping_poller():
+def test_player_tab_deactivate_stops_icon_loader_and_hides_tooltip_and_poller():
     actions = []
 
     class RecordingTooltip:
@@ -277,21 +358,30 @@ def test_player_tab_deactivate_hides_tooltip_before_stopping_poller():
         def deactivate(self):
             actions.append("poller deactivated")
 
+    class RecordingIconLoader:
+        def deactivate(self):
+            actions.append("icons deactivated")
+
     tab = object.__new__(PlayerTab)
     tab.tooltip = RecordingTooltip()
     tab.poller = RecordingPoller()
+    tab.icon_loader = RecordingIconLoader()
 
     tab.deactivate()
 
-    assert actions == ["tooltip hidden", "poller deactivated"]
+    assert actions == [
+        "tooltip hidden",
+        "poller deactivated",
+        "icons deactivated",
+    ]
 
 
-def test_player_tab_extra_slot_cleanup_hides_tooltip_before_destroying_canvases():
+def test_player_tab_extra_slot_cleanup_only_hides_tooltip_for_destroyed_owner():
     actions = []
 
     class RecordingTooltip:
-        def hide(self):
-            actions.append("tooltip hidden")
+        def hide(self, owner=None):
+            actions.append(f"tooltip checked for {owner.name}")
 
     class RecordingCanvas:
         def __init__(self, name):
@@ -311,8 +401,32 @@ def test_player_tab_extra_slot_cleanup_hides_tooltip_before_destroying_canvases(
     tab._clear_extra_slots()
 
     assert actions == [
-        "tooltip hidden",
+        "tooltip checked for first",
         "first destroyed",
+        "tooltip checked for second",
         "second destroyed",
     ]
     assert tab.extra_slots == []
+
+
+def test_item_tooltip_ignores_hide_from_non_owner():
+    actions = []
+
+    class Window:
+        def destroy(self):
+            actions.append("destroyed")
+
+    owner = object()
+    other = object()
+    tooltip = object.__new__(ItemTooltip)
+    tooltip.window = Window()
+    tooltip.owner = owner
+
+    tooltip.hide(other)
+    assert actions == []
+    assert tooltip.window is not None
+
+    tooltip.hide(owner)
+    assert actions == ["destroyed"]
+    assert tooltip.window is None
+    assert tooltip.owner is None

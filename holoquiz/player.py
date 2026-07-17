@@ -3,16 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 import json
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, Callable
 from urllib.parse import quote
 from urllib.request import urlopen
 
-from PIL import Image, ImageDraw, UnidentifiedImageError
+from PIL import Image, ImageDraw
 
 
 ITEM_ICON_BASE_URL = "https://blocksitems.com/api/v1/items"
 MINECRAFT_TARGET_VERSION = "1.21.10"
+DEFAULT_MAX_ICON_RESPONSE_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -227,12 +228,19 @@ class ItemIconClient:
         *,
         size: int = 64,
         timeout_seconds: float = 1.0,
+        max_response_bytes: int = DEFAULT_MAX_ICON_RESPONSE_BYTES,
         opener: Callable[..., Any] = urlopen,
     ) -> None:
+        if size <= 0:
+            raise ValueError("Item icon size must be positive.")
+        if max_response_bytes <= 0:
+            raise ValueError("Item icon response limit must be positive.")
         self.size = size
         self.timeout_seconds = timeout_seconds
+        self.max_response_bytes = max_response_bytes
         self._opener = opener
         self._cache: dict[str, bytes] = {}
+        self._in_flight: dict[str, Event] = {}
         self._lock = Lock()
         self._fallback = _fallback_icon(size)
 
@@ -240,24 +248,54 @@ class ItemIconClient:
     def fallback_icon(self) -> bytes:
         return self._fallback
 
-    def get_icon(self, item_id: str) -> bytes:
-        with self._lock:
-            cached = self._cache.get(item_id)
-        if cached is not None:
-            return cached
+    def _fetch_icon(self, item_id: str) -> bytes:
         try:
             url = build_item_icon_url(item_id, self.size)
             with self._opener(url, timeout=self.timeout_seconds) as response:
                 content_type = str(response.headers.get("Content-Type", ""))
-                if not content_type.casefold().startswith("image/"):
-                    raise ValueError("Item icon endpoint did not return an image.")
-                icon = response.read()
+                media_type = content_type.partition(";")[0].strip().casefold()
+                if media_type != "image/png":
+                    raise ValueError("Item icon endpoint did not return PNG.")
+                icon = response.read(self.max_response_bytes + 1)
+                if len(icon) > self.max_response_bytes:
+                    raise ValueError("Item icon response exceeded the byte limit.")
             with Image.open(BytesIO(icon)) as image:
-                image.verify()
-        except (OSError, ValueError, UnidentifiedImageError):
-            icon = self._fallback
+                if image.format != "PNG":
+                    raise ValueError("Item icon payload was not PNG.")
+                if image.size != (self.size, self.size):
+                    raise ValueError("Item icon dimensions were unexpected.")
+                image.load()
+                normalized = image.convert("RGBA")
+            stream = BytesIO()
+            normalized.save(stream, format="PNG")
+            return stream.getvalue()
+        except Exception:
+            # Icon-service failures are isolated from player-data refreshes.
+            return self._fallback
+
+    def get_icon(self, item_id: str) -> bytes:
         with self._lock:
-            return self._cache.setdefault(item_id, icon)
+            cached = self._cache.get(item_id)
+            if cached is not None:
+                return cached
+            in_flight = self._in_flight.get(item_id)
+            if in_flight is None:
+                in_flight = Event()
+                self._in_flight[item_id] = in_flight
+                owns_request = True
+            else:
+                owns_request = False
+        if not owns_request:
+            in_flight.wait()
+            with self._lock:
+                return self._cache[item_id]
+
+        icon = self._fetch_icon(item_id)
+        with self._lock:
+            cached = self._cache.setdefault(item_id, icon)
+            completed = self._in_flight.pop(item_id)
+            completed.set()
+            return cached
 
 
 def _empty_slot(index: int, section: str) -> InventorySlot:

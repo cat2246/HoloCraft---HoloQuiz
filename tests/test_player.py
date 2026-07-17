@@ -1,5 +1,6 @@
 import json
 from io import BytesIO
+import threading
 
 import pytest
 from PIL import Image
@@ -142,14 +143,21 @@ class FakeResponse:
     def __exit__(self, *_args):
         return None
 
-    def read(self):
-        return self.body
+    def read(self, amount=None):
+        if amount is None:
+            return self.body
+        return self.body[:amount]
+
+
+def image_bytes(*, size=(64, 64), color="red", format="PNG"):
+    stream = BytesIO()
+    mode = "RGB" if format == "JPEG" else "RGBA"
+    Image.new(mode, size, color).save(stream, format=format)
+    return stream.getvalue()
 
 
 def png_bytes(color="red"):
-    stream = BytesIO()
-    Image.new("RGBA", (16, 16), color).save(stream, format="PNG")
-    return stream.getvalue()
+    return image_bytes(color=color)
 
 
 def test_player_overview_client_uses_configured_url_and_timeout():
@@ -206,3 +214,77 @@ def test_item_icon_client_returns_cached_fallback_for_invalid_image():
     assert requests == [
         "https://blocksitems.com/api/v1/items/minecraft:missing/icon?size=64"
     ]
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type"),
+    [
+        pytest.param(b"not-a-png", "image/png", id="invalid-png"),
+        pytest.param(image_bytes(format="JPEG"), "image/jpeg", id="non-png"),
+        pytest.param(
+            image_bytes(size=(32, 64)),
+            "image/png",
+            id="wrong-dimensions",
+        ),
+    ],
+)
+def test_item_icon_client_caches_fallback_for_invalid_icon_boundary(
+    body,
+    content_type,
+):
+    requests = []
+
+    def opener(url, *, timeout):
+        requests.append(url)
+        return FakeResponse(body, content_type)
+
+    client = ItemIconClient(opener=opener)
+
+    assert client.get_icon("minecraft:invalid") == client.fallback_icon
+    assert client.get_icon("minecraft:invalid") == client.fallback_icon
+    assert len(requests) == 1
+
+
+def test_item_icon_client_rejects_oversized_response_before_decode():
+    requests = []
+
+    def opener(url, *, timeout):
+        requests.append(url)
+        return FakeResponse(png_bytes(), "image/png")
+
+    client = ItemIconClient(opener=opener, max_response_bytes=32)
+
+    assert client.get_icon("minecraft:oversized") == client.fallback_icon
+    assert client.get_icon("minecraft:oversized") == client.fallback_icon
+    assert len(requests) == 1
+
+
+def test_item_icon_client_deduplicates_concurrent_cache_misses():
+    requests = []
+    request_started = threading.Event()
+    release_request = threading.Event()
+
+    def opener(url, *, timeout):
+        requests.append(url)
+        request_started.set()
+        assert release_request.wait(timeout=1)
+        return FakeResponse(png_bytes(), "image/png")
+
+    client = ItemIconClient(opener=opener)
+    results = []
+    threads = [
+        threading.Thread(
+            target=lambda: results.append(client.get_icon("minecraft:diamond"))
+        )
+        for _ in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    assert request_started.wait(timeout=1)
+    release_request.set()
+    for thread in threads:
+        thread.join(timeout=1)
+
+    assert len(results) == 2
+    assert results[0] == results[1] == png_bytes()
+    assert len(requests) == 1
