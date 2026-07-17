@@ -211,17 +211,32 @@ def test_runtime_controls_track_auto_heal_settings():
 
     controls.set_auto_heal_enabled(True)
     controls.set_auto_heal_items((item,))
+    controls.set_auto_heal_return_item_name("  Custom Sword  ")
 
     assert controls.get_auto_heal_items() == (item,)
+    assert controls.get_auto_heal_return_item_name() == "  Custom Sword  "
     assert controls.snapshot().auto_heal_enabled is True
     assert controls.snapshot().auto_heal_items == (item,)
+    assert controls.snapshot().auto_heal_return_item_name == "  Custom Sword  "
     assert controls.get_config().auto_heal_enabled is True
     assert controls.get_config().auto_heal_items == (item,)
+    assert controls.get_config().auto_heal_return_item_name == "  Custom Sword  "
+
+
+def test_runtime_controls_replace_and_clear_return_item_name():
+    controls = RuntimeControls.from_config(
+        BotConfig(auto_heal_return_item_name="Sword")
+    )
+
+    controls.set_auto_heal_return_item_name("Axe")
+    assert controls.get_auto_heal_return_item_name() == "Axe"
+    controls.set_auto_heal_return_item_name("")
+    assert controls.get_auto_heal_return_item_name() == ""
 
 
 def test_runtime_controls_reject_invalid_auto_heal_items():
     controls = RuntimeControls.from_config(BotConfig())
-    invalid = AutoHealItemConfig("Steak", 1.0, 2.0, 0.0, 0)
+    invalid = AutoHealItemConfig("Steak", 1.0, 2.0, 0, 0)
 
     with pytest.raises(ValueError, match="threshold"):
         controls.set_auto_heal_items((invalid,))

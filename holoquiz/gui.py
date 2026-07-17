@@ -114,6 +114,7 @@ def player_tab_auto_heal_options(config: BotConfig) -> dict[str, Any]:
     return {
         "auto_heal_enabled": config.auto_heal_enabled,
         "auto_heal_items": config.auto_heal_items,
+        "auto_heal_return_item_name": config.auto_heal_return_item_name,
     }
 
 
@@ -1509,6 +1510,9 @@ class HoloQuizControlPanel:
             on_auto_heal_items_changed=(
                 self._on_auto_heal_items_changed
             ),
+            on_auto_heal_return_item_changed=(
+                self._on_auto_heal_return_item_changed
+            ),
         )
         self.notebook.bind("<<NotebookTabChanged>>", self._on_feature_tab_changed)
 
@@ -1563,6 +1567,7 @@ class HoloQuizControlPanel:
             self.config_path,
             enabled=config.auto_heal_enabled,
             items=config.auto_heal_items,
+            return_item_name=config.auto_heal_return_item_name,
         )
 
     def _on_auto_heal_enabled_changed(self, enabled: bool) -> None:
@@ -1574,6 +1579,10 @@ class HoloQuizControlPanel:
         items: tuple[AutoHealItemConfig, ...],
     ) -> None:
         self.controls.set_auto_heal_items(items)
+        self._save_auto_heal_settings()
+
+    def _on_auto_heal_return_item_changed(self, name: str) -> None:
+        self.controls.set_auto_heal_return_item_name(name)
         self._save_auto_heal_settings()
 
     def _configure_styles(self) -> None:

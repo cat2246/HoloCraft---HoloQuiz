@@ -59,6 +59,7 @@ class RuntimeSnapshot:
     coordinate_locks: tuple[CoordinateLockConfig, ...]
     auto_heal_enabled: bool
     auto_heal_items: tuple[AutoHealItemConfig, ...]
+    auto_heal_return_item_name: str
 
 
 class RuntimeControls:
@@ -104,6 +105,9 @@ class RuntimeControls:
         self._auto_heal_items = validate_auto_heal_items(
             base_config.auto_heal_items
         )
+        self._auto_heal_return_item_name = (
+            base_config.auto_heal_return_item_name
+        )
         self._functions = {
             function.key: function.enabled_by_default
             for function in self.registry.all()
@@ -145,6 +149,9 @@ class RuntimeControls:
                 coordinate_locks=tuple(self._coordinate_locks),
                 auto_heal_enabled=self._auto_heal_enabled,
                 auto_heal_items=tuple(self._auto_heal_items),
+                auto_heal_return_item_name=(
+                    self._auto_heal_return_item_name
+                ),
             )
 
     def snapshot(self) -> RuntimeSnapshot:
@@ -174,6 +181,9 @@ class RuntimeControls:
                 coordinate_locks=tuple(self._coordinate_locks),
                 auto_heal_enabled=self._auto_heal_enabled,
                 auto_heal_items=tuple(self._auto_heal_items),
+                auto_heal_return_item_name=(
+                    self._auto_heal_return_item_name
+                ),
             )
 
     def is_program_enabled(self) -> bool:
@@ -295,6 +305,16 @@ class RuntimeControls:
         validated = validate_auto_heal_items(items)
         with self._lock:
             self._auto_heal_items = validated
+
+    def get_auto_heal_return_item_name(self) -> str:
+        with self._lock:
+            return self._auto_heal_return_item_name
+
+    def set_auto_heal_return_item_name(self, name: str) -> None:
+        if not isinstance(name, str):
+            raise ValueError("Auto Heal return item name must be a string.")
+        with self._lock:
+            self._auto_heal_return_item_name = name
 
     def is_coordinate_lock_enabled(self) -> bool:
         with self._lock:

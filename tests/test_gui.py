@@ -357,16 +357,34 @@ def test_auto_heal_items_update_runtime_and_persist(tmp_path):
     assert persisted["auto_heal_items"][0]["name"] == "Steak"
 
 
+def test_return_item_update_runtime_and_persist_exact_name(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"dry_run": false}\n', encoding="utf-8")
+    panel = object.__new__(gui.HoloQuizControlPanel)
+    panel.config_path = config_path
+    panel.controls = RuntimeControls.from_config(BotConfig())
+    name = "  .｡*ﾟ+.*.｡ Sword ｡+..｡*ﾟ  "
+
+    panel._on_auto_heal_return_item_changed(name)
+
+    assert panel.controls.get_auto_heal_return_item_name() == name
+    persisted = json.loads(config_path.read_text(encoding="utf-8"))
+    assert persisted["auto_heal_return_item_name"] == name
+    assert persisted["dry_run"] is False
+
+
 def test_player_tab_auto_heal_options_come_from_runtime_config():
     item = AutoHealItemConfig("Steak", 5, 2, 10, 6)
     config = BotConfig(
         auto_heal_enabled=True,
         auto_heal_items=(item,),
+        auto_heal_return_item_name="Sword",
     )
 
     assert gui.player_tab_auto_heal_options(config) == {
         "auto_heal_enabled": True,
         "auto_heal_items": (item,),
+        "auto_heal_return_item_name": "Sword",
     }
 
 
