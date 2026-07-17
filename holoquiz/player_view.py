@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 import queue
 from typing import Any, Callable
 
@@ -36,10 +37,11 @@ class PlayerPoller:
             max_workers=1,
             thread_name_prefix="player-view",
         )
-        self.results: queue.Queue[tuple[bool, Any]] = queue.Queue()
+        self.results: queue.Queue[tuple[int, bool, Any]] = queue.Queue()
         self.active = False
         self.in_flight = False
         self.closed = False
+        self._activation_generation = 0
         self._poll_after_id: str | None = None
         self._drain_after_id: str | None = None
 
@@ -47,6 +49,7 @@ class PlayerPoller:
         if self.closed or self.active:
             return
         self.active = True
+        self._activation_generation += 1
         self._schedule_drain()
         self.refresh()
 
@@ -60,14 +63,16 @@ class PlayerPoller:
             return False
         self._cancel("_poll_after_id")
         self.in_flight = True
-        self.executor.submit(self._fetch_to_queue)
+        self.executor.submit(
+            partial(self._fetch_to_queue, self._activation_generation)
+        )
         return True
 
-    def _fetch_to_queue(self) -> None:
+    def _fetch_to_queue(self, generation: int) -> None:
         try:
-            self.results.put((True, self.fetch()))
+            self.results.put((generation, True, self.fetch()))
         except Exception as error:
-            self.results.put((False, error))
+            self.results.put((generation, False, error))
 
     def _schedule_drain(self) -> None:
         if self.active and not self.closed and self._drain_after_id is None:
@@ -78,24 +83,31 @@ class PlayerPoller:
 
     def _drain(self) -> None:
         self._drain_after_id = None
-        delivered = False
+        delivered_current = False
+        retired_stale = False
         while True:
             try:
-                ok, value = self.results.get_nowait()
+                generation, ok, value = self.results.get_nowait()
             except queue.Empty:
                 break
-            delivered = True
             self.in_flight = False
+            if generation != self._activation_generation:
+                retired_stale = True
+                continue
+            delivered_current = True
             if not self.closed:
                 if ok:
                     self.on_success(value)
                 else:
                     self.on_error(value)
-        if delivered and self.active and not self.closed:
-            self._poll_after_id = self.scheduler.after(
-                self.interval_ms,
-                self._scheduled_refresh,
-            )
+        if self.active and not self.closed:
+            if retired_stale:
+                self.refresh()
+            elif delivered_current:
+                self._poll_after_id = self.scheduler.after(
+                    self.interval_ms,
+                    self._scheduled_refresh,
+                )
         self._schedule_drain()
 
     def _scheduled_refresh(self) -> None:

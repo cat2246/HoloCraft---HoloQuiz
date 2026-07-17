@@ -1,4 +1,7 @@
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
+import threading
+
+import pytest
 
 from holoquiz.player_view import PlayerPoller
 
@@ -46,6 +49,20 @@ class ManualExecutor:
 
     def shutdown(self, **kwargs):
         self.shutdown_calls.append(kwargs)
+
+
+class RecordingThreadExecutor:
+    def __init__(self):
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.futures = []
+
+    def submit(self, function):
+        future = self.executor.submit(function)
+        self.futures.append(future)
+        return future
+
+    def shutdown(self, **kwargs):
+        self.executor.shutdown(**kwargs)
 
 
 def test_player_poller_activates_immediately_and_prevents_overlap():
@@ -127,3 +144,96 @@ def test_player_poller_deactivate_and_close_cancel_callbacks():
     assert poller.active is False
     assert scheduler.callbacks == {}
     assert executor.shutdown_calls == [{"wait": False, "cancel_futures": True}]
+
+
+def test_player_poller_reactivation_discards_hidden_result_and_fetches_fresh_immediately():
+    scheduler = FakeScheduler()
+    executor = ManualExecutor()
+    snapshots = iter(["hidden snapshot", "fresh snapshot"])
+    successes = []
+    poller = PlayerPoller(
+        scheduler,
+        lambda: next(snapshots),
+        successes.append,
+        lambda _error: None,
+        executor=executor,
+    )
+    poller.activate()
+    poller.deactivate()
+    executor.run_next()
+
+    poller.activate()
+    assert executor.calls == []
+    scheduler.run_delay(25)
+
+    assert successes == []
+    assert len(executor.calls) == 1
+
+    executor.run_next()
+    scheduler.run_delay(25)
+
+    assert successes == ["fresh snapshot"]
+
+
+@pytest.mark.parametrize(
+    "fetch",
+    [
+        pytest.param(lambda: "snapshot", id="success"),
+        pytest.param(
+            lambda: (_ for _ in ()).throw(OSError("connection refused")),
+            id="error",
+        ),
+    ],
+)
+def test_player_poller_completion_after_close_never_invokes_callbacks(fetch):
+    scheduler = FakeScheduler()
+    executor = ManualExecutor()
+    successes = []
+    errors = []
+    poller = PlayerPoller(
+        scheduler,
+        fetch,
+        successes.append,
+        errors.append,
+        executor=executor,
+    )
+    poller.activate()
+    poller.close()
+
+    executor.run_next()
+
+    assert successes == []
+    assert errors == []
+    assert scheduler.callbacks == {}
+
+
+def test_player_poller_fetches_on_worker_but_schedules_and_delivers_on_main_thread():
+    main_thread_id = threading.get_ident()
+    scheduler = FakeScheduler()
+    scheduler_thread_ids = []
+    original_after = scheduler.after
+
+    def record_after(delay_ms, callback):
+        scheduler_thread_ids.append(threading.get_ident())
+        return original_after(delay_ms, callback)
+
+    scheduler.after = record_after
+    executor = RecordingThreadExecutor()
+    fetch_thread_ids = []
+    callback_thread_ids = []
+    poller = PlayerPoller(
+        scheduler,
+        lambda: fetch_thread_ids.append(threading.get_ident()) or "snapshot",
+        lambda _value: callback_thread_ids.append(threading.get_ident()),
+        lambda _error: callback_thread_ids.append(threading.get_ident()),
+        executor=executor,
+    )
+
+    poller.activate()
+    executor.futures[0].result(timeout=1)
+    scheduler.run_delay(25)
+    poller.close()
+
+    assert fetch_thread_ids[0] != main_thread_id
+    assert scheduler_thread_ids and set(scheduler_thread_ids) == {main_thread_id}
+    assert callback_thread_ids == [main_thread_id]
