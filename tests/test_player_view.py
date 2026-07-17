@@ -8,8 +8,6 @@ import holoquiz.player_view as player_view
 from holoquiz.config import AutoHealItemConfig
 from holoquiz.player import InventorySlot, PlayerItem, parse_player_payload
 from holoquiz.player_view import (
-    AUTO_HEAL_LIST_HEIGHT,
-    configure_auto_heal_rule_list,
     configure_scrollable_player_body,
     format_auto_heal_rule,
     ItemSlotWidget,
@@ -18,6 +16,7 @@ from holoquiz.player_view import (
     PlayerTab,
     health_percent,
     hunger_percent,
+    layout_auto_heal_rule_actions,
     layout_player_sections,
     parse_auto_heal_form,
     scroll_player_body,
@@ -533,55 +532,6 @@ def test_player_sections_follow_approved_full_width_order():
     ]
 
 
-def test_auto_heal_rule_list_keeps_fixed_scrollable_height_for_many_rules():
-    calls = []
-
-    class RecordingScrollbar:
-        def set(self, first, last):
-            calls.append(("scrollbar-set", first, last))
-
-        def grid(self, **options):
-            calls.append(("scrollbar-grid", options))
-
-    class RecordingCanvas:
-        def configure(self, **options):
-            calls.append(("canvas-configure", options))
-
-        def create_window(self, position, **options):
-            calls.append(("canvas-window", position, options))
-            return 17
-
-        def grid(self, **options):
-            calls.append(("canvas-grid", options))
-
-        def bind(self, event, callback):
-            calls.append(("canvas-bind", event, callback))
-
-        def bbox(self, target):
-            calls.append(("canvas-bbox", target))
-            return (0, 0, 320, 900)
-
-        def itemconfigure(self, window_id, **options):
-            calls.append(("canvas-itemconfigure", window_id, options))
-
-    class RecordingRows:
-        def bind(self, event, callback):
-            calls.append(("rows-bind", event, callback))
-
-    canvas = RecordingCanvas()
-    scrollbar = RecordingScrollbar()
-    rows = RecordingRows()
-
-    configure_auto_heal_rule_list(canvas, scrollbar, rows)
-
-    configured = [entry for entry in calls if entry[0] == "canvas-configure"]
-    assert configured[0][1]["height"] == AUTO_HEAL_LIST_HEIGHT
-    assert configured[0][1]["yscrollcommand"] == scrollbar.set
-    assert any(entry[0] == "scrollbar-grid" for entry in calls)
-    assert any(entry[:2] == ("rows-bind", "<Configure>") for entry in calls)
-    assert any(entry[:2] == ("canvas-bind", "<Configure>") for entry in calls)
-
-
 def test_item_slot_fallback_draws_stack_count_overlay_without_tk():
     operations = []
 
@@ -764,6 +714,54 @@ def test_player_tab_upserts_rule_by_exact_name_and_notifies():
 
     assert tab.auto_heal_items == (updated,)
     assert saved == [(updated,)]
+
+
+def test_auto_heal_rule_actions_place_edit_immediately_before_remove():
+    calls = []
+
+    class RecordingButton:
+        def __init__(self, name):
+            self.name = name
+
+        def grid(self, **options):
+            calls.append((self.name, options))
+
+    layout_auto_heal_rule_actions(
+        RecordingButton("edit"),
+        RecordingButton("remove"),
+    )
+
+    assert calls == [
+        ("edit", {"row": 0, "column": 1, "padx": (8, 4)}),
+        ("remove", {"row": 0, "column": 2}),
+    ]
+
+
+def test_player_tab_edit_opens_prefilled_exact_name_rule(monkeypatch):
+    opened = []
+    item = AutoHealItemConfig("Steak", 5, 2.5, 30, 15)
+    tab = object.__new__(PlayerTab)
+    tab.parent = object()
+    tab.auto_heal_items = (item,)
+    tab._save_auto_heal_item = lambda saved: None
+    monkeypatch.setattr(
+        player_view,
+        "AutoHealItemDialog",
+        lambda parent, **options: opened.append((parent, options)),
+    )
+
+    tab._edit_auto_heal_item(item)
+
+    assert opened == [
+        (
+            tab.parent,
+            {
+                "name": "Steak",
+                "existing": item,
+                "on_save": tab._save_auto_heal_item,
+            },
+        )
+    ]
 
 
 def test_player_tab_removes_exact_rule_and_notifies():
