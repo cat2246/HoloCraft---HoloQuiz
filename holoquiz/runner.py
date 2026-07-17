@@ -44,6 +44,7 @@ class Sender(Protocol):
 class PendingQuestion:
     question: str
     candidate_answer: str | None
+    session_id: int
 
 
 class HoloQuizBot:
@@ -85,7 +86,8 @@ class HoloQuizBot:
             self.runtime_controls.get_config().chat_triggers,
         )
 
-        if not self.runtime_controls.is_holoquiz_enabled():
+        session_id = self.runtime_controls.get_holoquiz_session_id()
+        if session_id is None:
             return
 
         event = parse_log_line(line)
@@ -96,11 +98,11 @@ class HoloQuizBot:
             return
 
         if isinstance(event, QuizQuestion):
-            self._handle_question(event.question)
+            self._handle_question(event.question, session_id)
         elif isinstance(event, AnswerReveal):
-            self._handle_answer_reveal(event.answer)
+            self._handle_answer_reveal(event.answer, session_id)
 
-    def _handle_question(self, question: str) -> None:
+    def _handle_question(self, question: str, session_id: int) -> None:
         question_key = normalize_question(question)
         now = self.clock()
         last_seen_at = self._last_question_times.get(question_key)
@@ -116,6 +118,7 @@ class HoloQuizBot:
         self.pending_question = PendingQuestion(
             question=question,
             candidate_answer=None,
+            session_id=session_id,
         )
 
         if not self.runtime_controls.is_function_enabled(FIND_ANSWER_FUNCTION):
@@ -128,16 +131,28 @@ class HoloQuizBot:
             answer = self.answer_service.ask(question)
             source = "codex"
 
+        if not self.runtime_controls.is_holoquiz_session_active(session_id):
+            self._discard_pending_session(session_id)
+            return
+
         self.pending_question = PendingQuestion(
             question=question,
             candidate_answer=answer,
+            session_id=session_id,
         )
 
         if answer:
             if source == "codex":
-                if self._answer_was_revealed_while_searching(question):
+                if self._answer_was_revealed_while_searching(
+                    question,
+                    session_id,
+                ):
                     print(f"[stale] {question} -> {answer} (answer already revealed)")
                     return
+
+            if not self.runtime_controls.is_holoquiz_session_active(session_id):
+                self._discard_pending_session(session_id)
+                return
 
             if source == "codex":
                 self.memory.record_answer(question, answer, source="codex")
@@ -150,8 +165,11 @@ class HoloQuizBot:
         if debug_log:
             print(debug_log)
 
-    def _handle_answer_reveal(self, answer: str) -> None:
-        if self.pending_question is None:
+    def _handle_answer_reveal(self, answer: str, session_id: int) -> None:
+        if (
+            self.pending_question is None
+            or self.pending_question.session_id != session_id
+        ):
             print(f"[reveal] {answer} (no pending question)")
             self.pending_question = None
             return
@@ -165,7 +183,11 @@ class HoloQuizBot:
         print(f"[learned] {pending_question.question} -> {answer}")
         self.pending_question = None
 
-    def _answer_was_revealed_while_searching(self, question: str) -> bool:
+    def _answer_was_revealed_while_searching(
+        self,
+        question: str,
+        session_id: int,
+    ) -> bool:
         if self.runtime_controls.get_config().dry_run:
             return False
 
@@ -173,10 +195,21 @@ class HoloQuizBot:
             self._before_live_answer_send()
 
         pending_question = self.pending_question
-        if pending_question is None:
+        if (
+            pending_question is None
+            or pending_question.session_id != session_id
+        ):
             return True
 
         return normalize_question(pending_question.question) != normalize_question(question)
+
+    def _discard_pending_session(self, session_id: int) -> None:
+        pending_question = self.pending_question
+        if (
+            pending_question is not None
+            and pending_question.session_id == session_id
+        ):
+            self.pending_question = None
 
 
 def build_bot(

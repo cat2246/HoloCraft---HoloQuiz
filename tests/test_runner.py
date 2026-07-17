@@ -1,5 +1,6 @@
 import json
 from collections import deque
+from threading import Event, Thread
 
 import pytest
 
@@ -44,6 +45,19 @@ class DebugAnswerService:
 
     def ask(self, question):
         return None
+
+
+class BlockingAnswerService:
+    def __init__(self, answer):
+        self.answer = answer
+        self.started = Event()
+        self.release = Event()
+
+    def ask(self, question):
+        self.started.set()
+        if not self.release.wait(timeout=2):
+            raise TimeoutError("Test did not release the answer service.")
+        return self.answer
 
 
 def make_bot(tmp_path, answer_service=None, sender=None, cooldown=3.0):
@@ -269,6 +283,61 @@ def test_chat_triggers_run_when_holoquiz_disabled(tmp_path):
     bot.handle_line("[System] [CHAT] Good Morning!")
 
     assert sender.macros == [("tGood Morning{{Enter}}", None)]
+
+
+def test_disabling_holoquiz_discards_in_flight_lookup_result(tmp_path):
+    controls = RuntimeControls.from_config(BotConfig())
+    sender = FakeSender()
+    answer_service = BlockingAnswerService("Notch")
+    bot = make_bot_with_controls(
+        tmp_path,
+        controls=controls,
+        answer_service=answer_service,
+        sender=sender,
+    )
+    worker = Thread(
+        target=bot.handle_line,
+        args=(
+            "[17:40:00] [Render thread/INFO]: [System] [CHAT] "
+            "[HoloQuiz] Who created Minecraft?",
+        ),
+    )
+
+    worker.start()
+    assert answer_service.started.wait(timeout=2)
+    controls.set_holoquiz_enabled(False)
+    answer_service.release.set()
+    worker.join(timeout=2)
+
+    assert worker.is_alive() is False
+    assert sender.sent == []
+    assert bot.memory.lookup("Who created Minecraft?") is None
+    assert bot.pending_question is None
+    assert controls.get_latest_question() is None
+
+
+def test_reenabled_holoquiz_rejects_reveal_for_stale_pending_question(tmp_path):
+    controls = RuntimeControls.from_config(BotConfig())
+    bot = make_bot_with_controls(tmp_path, controls=controls)
+    bot.handle_line(
+        "[17:40:00] [Render thread/INFO]: [System] [CHAT] "
+        "[HoloQuiz] Who created Minecraft?"
+    )
+
+    controls.set_holoquiz_enabled(False)
+    assert controls.get_latest_question() is None
+    bot.handle_line(
+        "[17:41:00] [Render thread/INFO]: [System] [CHAT] "
+        "[HoloQuiz] What mob explodes near players?"
+    )
+    controls.set_holoquiz_enabled(True)
+    bot.handle_line(
+        "[17:41:09] [Render thread/INFO]: [System] [CHAT] "
+        "[HoloQuiz] No one got the answer! The answer was Creeper."
+    )
+
+    assert bot.memory.lookup("Who created Minecraft?") is None
+    assert bot.pending_question is None
 
 
 def test_bot_skips_answer_lookup_when_find_answer_function_disabled(tmp_path):

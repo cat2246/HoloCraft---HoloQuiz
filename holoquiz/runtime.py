@@ -69,6 +69,7 @@ class RuntimeControls:
         self._lock = RLock()
         self._program_enabled = program_enabled and base_config.program_enabled
         self._holoquiz_enabled = base_config.holoquiz_enabled
+        self._holoquiz_session_id = 0
         self._dry_run = base_config.dry_run
         self._answer_sound_enabled = base_config.answer_sound_enabled
         self._auto_answer_enabled = base_config.auto_answer_enabled
@@ -174,9 +175,27 @@ class RuntimeControls:
         with self._lock:
             return self._holoquiz_enabled
 
+    def get_holoquiz_session_id(self) -> int | None:
+        with self._lock:
+            if not self._holoquiz_enabled:
+                return None
+            return self._holoquiz_session_id
+
+    def is_holoquiz_session_active(self, session_id: int) -> bool:
+        with self._lock:
+            return (
+                self._holoquiz_enabled
+                and self._holoquiz_session_id == session_id
+            )
+
     def set_holoquiz_enabled(self, enabled: bool) -> None:
         with self._lock:
+            if self._holoquiz_enabled == enabled:
+                return
             self._holoquiz_enabled = enabled
+            self._holoquiz_session_id += 1
+            if not enabled:
+                self._latest_question = None
 
     def set_dry_run(self, enabled: bool) -> None:
         with self._lock:
