@@ -4,8 +4,9 @@ import threading
 import pytest
 
 import holoquiz.player_view as player_view
-from holoquiz.player import parse_player_payload
+from holoquiz.player import InventorySlot, PlayerItem, parse_player_payload
 from holoquiz.player_view import (
+    ItemSlotWidget,
     ItemTooltip,
     PlayerPoller,
     PlayerTab,
@@ -338,6 +339,54 @@ def test_player_progress_values_are_clamped():
 
     assert health_percent(snapshot) == pytest.approx(78.8235, rel=0.001)
     assert hunger_percent(snapshot) == 100.0
+
+
+def test_item_slot_fallback_draws_stack_count_overlay_without_tk():
+    operations = []
+
+    class RecordingTooltip:
+        def hide(self, _owner):
+            operations.append("tooltip")
+
+    class RecordingCanvas:
+        def delete(self, _target):
+            operations.append("delete")
+
+        def configure(self, **_kwargs):
+            operations.append("configure")
+
+        def create_rectangle(self, *_args, **_kwargs):
+            operations.append("fallback rectangle")
+
+        def create_line(self, *_args, **_kwargs):
+            operations.append("fallback line")
+
+        def create_text(self, *_args, **kwargs):
+            operations.append(f"count {kwargs['text']}")
+
+    slot = InventorySlot(
+        0,
+        "hotbar",
+        PlayerItem(
+            empty=False,
+            item_id="minecraft:diamond",
+            count=7,
+        ),
+    )
+    widget = object.__new__(ItemSlotWidget)
+    widget.tooltip = RecordingTooltip()
+    widget.canvas = RecordingCanvas()
+    widget.slot = None
+    widget.photo = None
+
+    widget.render(slot, photo=None)
+
+    assert operations[-4:] == [
+        "fallback rectangle",
+        "fallback line",
+        "fallback line",
+        "count 7",
+    ]
 
 
 def test_player_tab_public_lifecycle_is_explicit():

@@ -355,8 +355,12 @@ class ItemSlotWidget:
             )
             self.canvas.create_line(15, 15, SLOT_SIZE - 15, SLOT_SIZE - 15)
             self.canvas.create_line(SLOT_SIZE - 15, 15, 15, SLOT_SIZE - 15)
-            return
-        self.canvas.create_image(SLOT_SIZE // 2, SLOT_SIZE // 2, image=photo)
+        else:
+            self.canvas.create_image(
+                SLOT_SIZE // 2,
+                SLOT_SIZE // 2,
+                image=photo,
+            )
         if slot.item.count > 1:
             self.canvas.create_text(
                 SLOT_SIZE - 4,
